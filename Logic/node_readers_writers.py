@@ -61,6 +61,10 @@ class Node(object):
         self.numeric = numeric
         self.categorical = categorical
 
+    @classmethod
+    def get_inputs(cls):
+        return {key: val for key, val in cls.POTENTIAL_INPUTS.items() if val.as_input}
+
 
 class CombineXYZ(Node):
     NAME = "CombineXYZ"
