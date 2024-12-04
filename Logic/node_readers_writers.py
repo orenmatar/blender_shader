@@ -41,17 +41,17 @@ def _convert_list_to_dict(some_list):
 
 
 class Node(object):
-    POTENTIAL_INPUTS: Dict = {}
+    NUMERIC: Dict = {}
     CATEGORICAL: Dict = {}
     OUTPUTS: Dict = {}
 
     def __init_subclass__(cls, **kwargs):
         """
-        Automatically creates INPUT_DICT for any subclass based on its POTENTIAL_INPUTS.
+        Automatically creates INPUT_DICT for any subclass based on its NUMERIC.
         """
         super().__init_subclass__(**kwargs)
-        cls.POTENTIAL_INPUTS = _convert_list_to_dict(
-            getattr(cls, "POTENTIAL_INPUTS", [])
+        cls.NUMERIC = _convert_list_to_dict(
+            getattr(cls, "NUMERIC", [])
         )
         cls.CATEGORICAL = _convert_list_to_dict(getattr(cls, "CATEGORICAL", []))
         cls.OUTPUTS = _convert_list_to_dict(getattr(cls, "OUTPUTS", []))
@@ -63,12 +63,12 @@ class Node(object):
 
     @classmethod
     def get_inputs(cls):
-        return {key: val for key, val in cls.POTENTIAL_INPUTS.items() if val.as_input}
+        return {key: val for key, val in cls.NUMERIC.items() if val.as_input}
 
 
 class CombineXYZ(Node):
     NAME = "CombineXYZ"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput("X", (-10, 10), 0, NumericType.FLOAT, True),
         NumericInput("Y", (-10, 10), 0, NumericType.FLOAT, True),
         NumericInput("Z", (-10, 10), 0, NumericType.FLOAT, True),
@@ -81,7 +81,7 @@ class CombineXYZ(Node):
 
 class Mapping(Node):
     NAME = "Mapping"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Location", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Scale", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
@@ -94,7 +94,7 @@ class Mapping(Node):
 
 class Math(Node):
     NAME = "Math"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput("value_0", (-10, 10), 0, NumericType.FLOAT, True),
         NumericInput("value_1", (-10, 10), 0, NumericType.FLOAT, True),
     ]
@@ -113,7 +113,7 @@ class Math(Node):
 
 class MixFloat(Node):
     NAME = "MixFloat"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput("Factor", (-10, 10), 0, NumericType.FLOAT, False),
         NumericInput("A", (-10, 10), 0, NumericType.FLOAT, True),
         NumericInput("B", (-10, 10), 0, NumericType.FLOAT, True),
@@ -133,7 +133,7 @@ class MixFloat(Node):
 
 class MixVector(Node):
     NAME = "MixVector"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput("Factor", (-10, 10), 0, NumericType.FLOAT, False),
         NumericInput("A", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("B", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
@@ -146,7 +146,7 @@ class MixVector(Node):
 
 class SeparateXYZ(Node):
     NAME = "SeparateXYZ"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True)
     ]
     OUTPUTS = [
@@ -169,7 +169,7 @@ class TexCoord(Node):
 
 class TexGabor(Node):
     NAME = "TexGabor"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Frequency", (0, 10), 2, NumericType.FLOAT, False),
@@ -182,7 +182,7 @@ class TexGabor(Node):
 
 class TexGradient(Node):
     NAME = "TexGradient"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
     ]
     CATEGORICAL = [
@@ -200,7 +200,7 @@ class TexGradient(Node):
 
 class TexNoise(Node):
     NAME = "TexNoise"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Lacunarity", (0, 10), 2, NumericType.FLOAT, False),
@@ -214,7 +214,7 @@ class TexNoise(Node):
 
 class TexVoronoiF(Node):
     NAME = "TexVoronoiF"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Randomness", (0, 1), 1, NumericType.FLOAT, False),
@@ -228,7 +228,7 @@ class TexVoronoiF(Node):
 
 class TexWave(Node):
     NAME = "TexWave"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Distortion", (0, 5), 0, NumericType.FLOAT, False),
@@ -242,7 +242,7 @@ class TexWave(Node):
 
 class ValToRGB(Node):
     NAME = "ValToRGB"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput("Fac", (-10, 10), 0, NumericType.FLOAT, True),
         NumericInput("element_0", (0, 1), 0, NumericType.FLOAT, False),
         NumericInput("element_1", (0, 1), 1, NumericType.FLOAT, False),
@@ -255,7 +255,7 @@ class ValToRGB(Node):
 
 class Value(Node):
     NAME = "Value"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput(VALUE, (-10, 10), 0, NumericType.FLOAT, True),
     ]
     OUTPUTS = [Output(VALUE, NumericType.FLOAT)]
@@ -266,7 +266,7 @@ class Value(Node):
 
 class VectorMath(Node):
     NAME = "VectorMath"
-    POTENTIAL_INPUTS = [
+    NUMERIC = [
         NumericInput("vector_0", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("vector_1", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
     ]
