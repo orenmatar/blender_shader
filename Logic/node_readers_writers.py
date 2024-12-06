@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Union, List, Dict
+import numpy as np
 
 VECTOR = "Vector"
 VALUE = "Value"
@@ -11,6 +12,7 @@ RESULT = "Result"
 class NumericType(Enum):
     VECTOR = 1
     FLOAT = 2
+    VECTOR_INPUT = 3
 
 
 @dataclass
@@ -55,6 +57,7 @@ class Node(object):
         )
         cls.CATEGORICAL = _convert_list_to_dict(getattr(cls, "CATEGORICAL", []))
         cls.OUTPUTS = _convert_list_to_dict(getattr(cls, "OUTPUTS", []))
+        assert all([x not in cls.NUMERIC for x in cls.CATEGORICAL]), "Cannot use the same name in numeric and categorical"
 
     def __init__(self, inputs, numeric, categorical):
         self.inputs = inputs
@@ -62,8 +65,35 @@ class Node(object):
         self.categorical = categorical
 
     @classmethod
+    def properties_to_node_instance(cls, inputs, properties):
+        numeric = {key: val for key, val in properties.items() if key in cls.NUMERIC}
+        categorical = {key: val for key, val in properties.items() if key in cls.CATEGORICAL}
+        return cls(inputs, numeric, categorical)
+
+    @classmethod
     def get_inputs(cls):
         return {key: val for key, val in cls.NUMERIC.items() if val.as_input}
+
+    @classmethod
+    def get_outputs(cls):
+        return cls.OUTPUTS
+
+    @classmethod
+    def get_node_type_free_inputs(cls):
+        return {key for key, param in cls.NUMERIC.items() if param.as_input}
+
+    @classmethod
+    def get_node_type_params(cls, default_values = True):
+        all_properties = {}
+        for key, param in cls.NUMERIC.items():
+            all_properties[key] = param.default
+        for key, param in cls.CATEGORICAL.items():
+            all_properties[key] = param.default
+        return all_properties
+
+    @classmethod
+    def get_random_output(cls):
+        return np.random.choice(list(cls.OUTPUTS))
 
 
 class CombineXYZ(Node):
@@ -82,7 +112,7 @@ class CombineXYZ(Node):
 class Mapping(Node):
     NAME = "Mapping"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
         NumericInput("Location", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
         NumericInput("Scale", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
     ]
@@ -159,8 +189,8 @@ class SeparateXYZ(Node):
         super().__init__(inputs, numeric, categorical)
 
 
-class TexCoord(Node):
-    NAME = "TexCoord"
+class InputNode(Node):
+    NAME = "InputNode"
     OUTPUTS = [Output("Object", NumericType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
@@ -170,7 +200,7 @@ class TexCoord(Node):
 class TexGabor(Node):
     NAME = "TexGabor"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Frequency", (0, 10), 2, NumericType.FLOAT, False),
     ]
@@ -183,7 +213,7 @@ class TexGabor(Node):
 class TexGradient(Node):
     NAME = "TexGradient"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
     ]
     CATEGORICAL = [
         Param(
@@ -201,7 +231,7 @@ class TexGradient(Node):
 class TexNoise(Node):
     NAME = "TexNoise"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Lacunarity", (0, 10), 2, NumericType.FLOAT, False),
         NumericInput("Distortion", (0, 5), 0, NumericType.FLOAT, False),
@@ -215,7 +245,7 @@ class TexNoise(Node):
 class TexVoronoiF(Node):
     NAME = "TexVoronoiF"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Randomness", (0, 1), 1, NumericType.FLOAT, False),
     ]
@@ -229,7 +259,7 @@ class TexVoronoiF(Node):
 class TexWave(Node):
     NAME = "TexWave"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
         NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
         NumericInput("Distortion", (0, 5), 0, NumericType.FLOAT, False),
     ]
@@ -286,6 +316,16 @@ class VectorMath(Node):
         )
     ]
     OUTPUTS = [Output(VECTOR, NumericType.VECTOR)]
+
+    def __init__(self, inputs, numeric, categorical):
+        super().__init__(inputs, numeric, categorical)
+
+
+class OutputNode(Node):
+    NAME = "Output"
+    NUMERIC = [
+        NumericInput("Color", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+    ]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
