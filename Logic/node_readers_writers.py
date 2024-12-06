@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Set
 import numpy as np
 
 VECTOR = "Vector"
@@ -8,11 +8,23 @@ VALUE = "Value"
 COLOR = "Color"
 RESULT = "Result"
 
+seed_value_range = (0, 1000)
 
-class NumericType(Enum):
+
+class ParamType(Enum):
     VECTOR = 1
     FLOAT = 2
-    VECTOR_INPUT = 3
+    VECTOR_INPUT = 3  # those are the vector inputs to textures usually - if not connected they default to coordinates
+    CATEGORICAL = 4
+    SEED = 5
+
+
+class ParamRequestType(Enum):
+    NUMERIC = 1
+    CATEGORICAL = 2
+    SEED = 3
+    ALL = 4
+    NON_VECTOR_INPUT = 5
 
 
 @dataclass
@@ -20,18 +32,18 @@ class Param:
     name: str
     options_range: tuple
     default: Union[tuple, str, float]
+    param_type: ParamType
 
 
 @dataclass
 class NumericInput(Param):
-    param_type: NumericType
     as_input: bool
 
 
 @dataclass
 class Output:
     name: str
-    param_type: NumericType
+    param_type: ParamType
 
 
 def _convert_list_to_dict(some_list):
@@ -46,28 +58,62 @@ class Node(object):
     NUMERIC: Dict = {}
     CATEGORICAL: Dict = {}
     OUTPUTS: Dict = {}
+    SEED: Dict = {}
 
     def __init_subclass__(cls, **kwargs):
         """
         Automatically creates INPUT_DICT for any subclass based on its NUMERIC.
         """
         super().__init_subclass__(**kwargs)
-        cls.NUMERIC = _convert_list_to_dict(
-            getattr(cls, "NUMERIC", [])
-        )
+        cls.NUMERIC = _convert_list_to_dict(getattr(cls, "NUMERIC", []))
         cls.CATEGORICAL = _convert_list_to_dict(getattr(cls, "CATEGORICAL", []))
         cls.OUTPUTS = _convert_list_to_dict(getattr(cls, "OUTPUTS", []))
-        assert all([x not in cls.NUMERIC for x in cls.CATEGORICAL]), "Cannot use the same name in numeric and categorical"
+        cls.SEED = _convert_list_to_dict(getattr(cls, "SEED", []))
+        assert all(
+            [x not in cls.NUMERIC for x in cls.CATEGORICAL]
+        ), "Cannot use the same name in numeric and categorical"
 
-    def __init__(self, inputs, numeric, categorical):
+    def __init__(self, inputs, numeric, categorical, seeds=None):
         self.inputs = inputs
         self.numeric = numeric
         self.categorical = categorical
+        if seeds is None:
+            seeds = {}
+        self.seeds = seeds
+
+    @classmethod
+    def get_node_type_params(cls, param_type: ParamRequestType, default_values=True):
+        if param_type == ParamRequestType.SEED:
+            relevant_dict = cls.SEED
+        elif param_type == ParamRequestType.NUMERIC:
+            relevant_dict = cls.NUMERIC
+        elif param_type == ParamRequestType.CATEGORICAL:
+            relevant_dict = cls.CATEGORICAL
+        elif param_type == ParamRequestType.ALL:
+            relevant_dict = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
+        elif param_type == ParamRequestType.NON_VECTOR_INPUT:
+            all_params = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
+            relevant_dict = {
+                key: value
+                for key, value in all_params.items()
+                if value.param_type != ParamType.VECTOR_INPUT
+            }
+        else:
+            raise ValueError
+        if default_values:
+            return {key: value.default for key, value in relevant_dict.items()}
+        # if do not return default values - then return ranges
+        return {
+            key: (value.options_range, value.param_type)
+            for key, value in relevant_dict.items()
+        }
 
     @classmethod
     def properties_to_node_instance(cls, inputs, properties):
         numeric = {key: val for key, val in properties.items() if key in cls.NUMERIC}
-        categorical = {key: val for key, val in properties.items() if key in cls.CATEGORICAL}
+        categorical = {
+            key: val for key, val in properties.items() if key in cls.CATEGORICAL
+        }
         return cls(inputs, numeric, categorical)
 
     @classmethod
@@ -83,15 +129,6 @@ class Node(object):
         return {key for key, param in cls.NUMERIC.items() if param.as_input}
 
     @classmethod
-    def get_node_type_params(cls, default_values = True):
-        all_properties = {}
-        for key, param in cls.NUMERIC.items():
-            all_properties[key] = param.default
-        for key, param in cls.CATEGORICAL.items():
-            all_properties[key] = param.default
-        return all_properties
-
-    @classmethod
     def get_random_output(cls):
         return np.random.choice(list(cls.OUTPUTS))
 
@@ -99,11 +136,11 @@ class Node(object):
 class CombineXYZ(Node):
     NAME = "CombineXYZ"
     NUMERIC = [
-        NumericInput("X", (-10, 10), 0, NumericType.FLOAT, True),
-        NumericInput("Y", (-10, 10), 0, NumericType.FLOAT, True),
-        NumericInput("Z", (-10, 10), 0, NumericType.FLOAT, True),
+        NumericInput("X", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("Y", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("Z", (-10, 10), 0, ParamType.FLOAT, True),
     ]
-    OUTPUTS = [Output(VECTOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -112,11 +149,11 @@ class CombineXYZ(Node):
 class Mapping(Node):
     NAME = "Mapping"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
-        NumericInput("Location", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
-        NumericInput("Scale", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("Scale", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
-    OUTPUTS = [Output(VECTOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -125,17 +162,18 @@ class Mapping(Node):
 class Math(Node):
     NAME = "Math"
     NUMERIC = [
-        NumericInput("value_0", (-10, 10), 0, NumericType.FLOAT, True),
-        NumericInput("value_1", (-10, 10), 0, NumericType.FLOAT, True),
+        NumericInput("value_0", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("value_1", (-10, 10), 0, ParamType.FLOAT, True),
     ]
     CATEGORICAL = [
         Param(
             "operation",
             ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "POWER", "SQRT", "ABSOLUTE"),
             "ADD",
+            ParamType.CATEGORICAL,
         )
     ]
-    OUTPUTS = [Output(VALUE, NumericType.FLOAT)]
+    OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -144,18 +182,19 @@ class Math(Node):
 class MixFloat(Node):
     NAME = "MixFloat"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0, NumericType.FLOAT, False),
-        NumericInput("A", (-10, 10), 0, NumericType.FLOAT, True),
-        NumericInput("B", (-10, 10), 0, NumericType.FLOAT, True),
+        NumericInput("Factor", (-10, 10), 0, ParamType.FLOAT, False),
+        NumericInput("A", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("B", (-10, 10), 0, ParamType.FLOAT, True),
     ]
     CATEGORICAL = [
         Param(
             "operation",
             ("MIX", "MULTIPLY", "BURN", "DODGE", "ADD", "OVERLAY", "SUBTRACT"),
             "ADD",
+            ParamType.CATEGORICAL,
         )
     ]
-    OUTPUTS = [Output(RESULT, NumericType.FLOAT)]
+    OUTPUTS = [Output(RESULT, ParamType.FLOAT)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -164,11 +203,11 @@ class MixFloat(Node):
 class MixVector(Node):
     NAME = "MixVector"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0, NumericType.FLOAT, False),
-        NumericInput("A", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
-        NumericInput("B", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput("Factor", (-10, 10), 0, ParamType.FLOAT, False),
+        NumericInput("A", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("B", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
-    OUTPUTS = [Output(RESULT, NumericType.VECTOR)]
+    OUTPUTS = [Output(RESULT, ParamType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -176,13 +215,11 @@ class MixVector(Node):
 
 class SeparateXYZ(Node):
     NAME = "SeparateXYZ"
-    NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR, True)
-    ]
+    NUMERIC = [NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR, True)]
     OUTPUTS = [
-        Output("X", NumericType.FLOAT),
-        Output("Y", NumericType.FLOAT),
-        Output("Z", NumericType.FLOAT),
+        Output("X", ParamType.FLOAT),
+        Output("Y", ParamType.FLOAT),
+        Output("Z", ParamType.FLOAT),
     ]
 
     def __init__(self, inputs, numeric, categorical):
@@ -191,7 +228,8 @@ class SeparateXYZ(Node):
 
 class InputNode(Node):
     NAME = "InputNode"
-    OUTPUTS = [Output("Object", NumericType.VECTOR)]
+    OUTPUTS = [Output("Object", ParamType.VECTOR)]
+    SEED = [Param("Z Rotation", seed_value_range, 0, ParamType.SEED)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -200,11 +238,12 @@ class InputNode(Node):
 class TexGabor(Node):
     NAME = "TexGabor"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
-        NumericInput("Frequency", (0, 10), 2, NumericType.FLOAT, False),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Frequency", (0, 10), 2, ParamType.FLOAT, False),
     ]
-    OUTPUTS = [Output(COLOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
+    SEED = [Param("Orientation", seed_value_range, 0, ParamType.SEED)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -213,16 +252,17 @@ class TexGabor(Node):
 class TexGradient(Node):
     NAME = "TexGradient"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
     ]
     CATEGORICAL = [
         Param(
             "gradient_type",
             ("LINEAR", "DIAGONAL", "SPHERICAL", "RADIAL"),
             "LINEAR",
+            ParamType.CATEGORICAL,
         )
     ]
-    OUTPUTS = [Output(COLOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -231,12 +271,13 @@ class TexGradient(Node):
 class TexNoise(Node):
     NAME = "TexNoise"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
-        NumericInput("Lacunarity", (0, 10), 2, NumericType.FLOAT, False),
-        NumericInput("Distortion", (0, 5), 0, NumericType.FLOAT, False),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Lacunarity", (0, 10), 2, ParamType.FLOAT, False),
+        NumericInput("Distortion", (0, 5), 0, ParamType.FLOAT, False),
     ]
-    OUTPUTS = [Output(COLOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
+    SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -245,12 +286,17 @@ class TexNoise(Node):
 class TexVoronoiF(Node):
     NAME = "TexVoronoiF"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
-        NumericInput("Randomness", (0, 1), 1, NumericType.FLOAT, False),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Randomness", (0, 1), 1, ParamType.FLOAT, False),
     ]
-    CATEGORICAL = [Param("distance", ("EUCLIDEAN", "CHEBYCHEV"), "EUCLIDEAN")]
-    OUTPUTS = [Output(COLOR, NumericType.VECTOR)]
+    CATEGORICAL = [
+        Param(
+            "distance", ("EUCLIDEAN", "CHEBYCHEV"), "EUCLIDEAN", ParamType.CATEGORICAL
+        )
+    ]
+    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
+    SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -259,12 +305,13 @@ class TexVoronoiF(Node):
 class TexWave(Node):
     NAME = "TexWave"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), NumericType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, NumericType.FLOAT, False),
-        NumericInput("Distortion", (0, 5), 0, NumericType.FLOAT, False),
+        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Distortion", (0, 5), 0, ParamType.FLOAT, False),
     ]
-    CATEGORICAL = [Param("wave_profile", ("SIN", "SAW"), "SIN")]
-    OUTPUTS = [Output(COLOR, NumericType.VECTOR)]
+    CATEGORICAL = [Param("wave_profile", ("SIN", "SAW"), "SIN", ParamType.CATEGORICAL)]
+    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
+    SEED = [Param("Phase Offset", seed_value_range, 0, ParamType.SEED)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -273,11 +320,11 @@ class TexWave(Node):
 class ValToRGB(Node):
     NAME = "ValToRGB"
     NUMERIC = [
-        NumericInput("Fac", (-10, 10), 0, NumericType.FLOAT, True),
-        NumericInput("element_0", (0, 1), 0, NumericType.FLOAT, False),
-        NumericInput("element_1", (0, 1), 1, NumericType.FLOAT, False),
+        NumericInput("Fac", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("element_0", (0, 1), 0, ParamType.FLOAT, False),
+        NumericInput("element_1", (0, 1), 1, ParamType.FLOAT, False),
     ]
-    OUTPUTS = [Output(COLOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -286,9 +333,9 @@ class ValToRGB(Node):
 class Value(Node):
     NAME = "Value"
     NUMERIC = [
-        NumericInput(VALUE, (-10, 10), 0, NumericType.FLOAT, True),
+        NumericInput(VALUE, (-10, 10), 0, ParamType.FLOAT, True),
     ]
-    OUTPUTS = [Output(VALUE, NumericType.FLOAT)]
+    OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -297,8 +344,8 @@ class Value(Node):
 class VectorMath(Node):
     NAME = "VectorMath"
     NUMERIC = [
-        NumericInput("vector_0", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
-        NumericInput("vector_1", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput("vector_0", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("vector_1", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
     CATEGORICAL = [
         Param(
@@ -313,9 +360,10 @@ class VectorMath(Node):
                 "ABSOLUTE",
             ),
             "ADD",
+            ParamType.CATEGORICAL,
         )
     ]
-    OUTPUTS = [Output(VECTOR, NumericType.VECTOR)]
+    OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
     def __init__(self, inputs, numeric, categorical):
         super().__init__(inputs, numeric, categorical)
@@ -324,7 +372,7 @@ class VectorMath(Node):
 class OutputNode(Node):
     NAME = "Output"
     NUMERIC = [
-        NumericInput("Color", (-10, 10), (0, 0, 0), NumericType.VECTOR, True),
+        NumericInput("Color", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
 
     def __init__(self, inputs, numeric, categorical):
