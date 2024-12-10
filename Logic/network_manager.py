@@ -26,17 +26,14 @@ class NetworkManager(object):
         "OutputNode": OutputNode,
         "InputNode": InputNode,
     }
-    NODE_TYPES_FOR_GENERATION = [
-        node_name
-        for node_name in NODE_TYPES
-        if node_name not in ["OutputNode", "InputNode"]
-    ]
+    NODE_TYPES_FOR_GENERATION = [node_name for node_name in NODE_TYPES if node_name not in ["OutputNode", "InputNode"]]
 
     def __init__(self):
         self.network = nx.MultiDiGraph()
         self.node_counts = defaultdict(int)
         self.free_inputs = {}
         self.must_connect_to_inputs = {}
+        self.names_to_types = {}
         for node_name, node_type in self.NODE_TYPES.items():
             node_vector_inputs = {
                 input_name
@@ -48,17 +45,13 @@ class NetworkManager(object):
     def initialize_network(self):
         self.in_node_name, self.out_node_name = "InputNode", "OutputNode"
         self.add_node(OutputNode, self.out_node_name, {"layer": 1})
-        in_properties = InputNode.get_node_type_params(
-            ParamRequestType.ALL, default_values=True
-        )
+        in_properties = InputNode.get_node_type_params(ParamRequestType.ALL, default_values=True)
         in_properties["layer"] = 1  # input layer incase nothing is connected to it
         self.add_node(InputNode, self.in_node_name, in_properties)
         self.in_node_output_name = list(InputNode.get_outputs())[0]
 
     def get_random_param_values(self, param_type: ParamRequestType):
-        dist_vals = self.get_all_nodes_values(
-            param_type, return_ranges=True, not_input_values=True
-        )
+        dist_vals = self.get_all_nodes_values(param_type, return_ranges=True, not_input_values=True)
         return self.pick_random_value_from_dict(dist_vals)
 
     def set_nodes_attributes(self, update_attributes: dict):
@@ -69,13 +62,10 @@ class NetworkManager(object):
     def generate_random_network(self, n_additions=5):
         # only after initialization (add assert)
         for i in range(n_additions):
-            random_node = np.random.choice(
-                [
-                    node_name
-                    for node_name, inputs in self.free_inputs.items()
-                    if len(inputs) > 0
-                ]
-            )
+            free_inputs = [node_name for node_name, inputs in self.free_inputs.items() if len(inputs) > 0]
+            if len(free_inputs) == 0:
+                break
+            random_node = np.random.choice(free_inputs)
             random_in = np.random.choice(list(self.free_inputs[random_node]))
             new_node_type_name = np.random.choice(self.NODE_TYPES_FOR_GENERATION)
             out = self.NODE_TYPES[new_node_type_name].get_random_output()
@@ -84,12 +74,7 @@ class NetworkManager(object):
 
         for node_name, free_inputs in self.free_inputs.items():
             for free_input in list(free_inputs):
-                if (
-                    free_input
-                    in self.must_connect_to_inputs[
-                        self.node_name_to_node_type_name(node_name)
-                    ]
-                ):
+                if free_input in self.must_connect_to_inputs[self.node_name_to_node_type_name(node_name)]:
                     self.add_edge(
                         self.in_node_name,
                         node_name,
@@ -101,22 +86,15 @@ class NetworkManager(object):
         self.node_counts[node_type_name] += 1
         node_name = node_type_name + f"_{self.node_counts[node_type_name]}"
         node_type: Node = self.NODE_TYPES[node_type_name]
-        properties = node_type.get_node_type_params(
-            ParamRequestType.ALL, default_values=True
-        )
+        properties = node_type.get_node_type_params(ParamRequestType.ALL, default_values=True)
         self.add_node(node_type, node_name, properties)
         return node_name
 
     def get_node_connected_inputs(self, node):
         in_edges = self.network.in_edges(node, data=True)
-        return [
-            edge_properties["in"]
-            for previous_node, self_node, edge_properties in in_edges
-        ]
+        return [edge_properties["in"] for previous_node, self_node, edge_properties in in_edges]
 
-    def get_all_nodes_values(
-        self, param_type: ParamRequestType, return_ranges=False, not_input_values=True
-    ):
+    def get_all_nodes_values(self, param_type: ParamRequestType, return_ranges=False, not_input_values=True):
         nodes = self.network.nodes(data=True)
         all_values = {}
         for node, values in nodes:
@@ -125,9 +103,7 @@ class NetworkManager(object):
                 values = {k: v for k, v in values.items() if k not in input_taken}
             node_type_name = self.node_name_to_node_type_name(node)
             node_type = self.NODE_TYPES[node_type_name]
-            properties = node_type.get_node_type_params(
-                param_type, default_values=False
-            )
+            properties = node_type.get_node_type_params(param_type, default_values=False)
             if return_ranges:
                 node_vals = {k: properties[k] for k in values if k in properties}
             else:
@@ -137,9 +113,7 @@ class NetworkManager(object):
         return all_values
 
     @staticmethod
-    def pick_random_value_from_dict(
-        nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]
-    ):
+    def pick_random_value_from_dict(nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]):
         result = {}
         for node, values in nodes_and_dist.items():
             node_rand_vals = {}
@@ -160,6 +134,7 @@ class NetworkManager(object):
         self.network.add_node(node_name, **properties)
         free_inputs = node_type.get_node_type_free_inputs()
         self.free_inputs[node_name] = free_inputs
+        self.names_to_types[node_name] = node_type
 
     def remove_node(self, node1):
         # TODO: make sure to remove inputs from free input dict, must_connect_to_inputs...
@@ -180,7 +155,7 @@ class NetworkManager(object):
         node_type = self.NODE_TYPES[node_type_name]
         node_data = self.network.nodes()[node_name]
         input_data = [x[2]["in"] for x in self.network.in_edges(node_name, data=True)]
-        return node_type.properties_to_node_instance(input_data, node_data)
+        return node_type.properties_to_node_instance(input_data, node_data, node_name)
 
     @staticmethod
     def node_name_to_node_type_name(node_name):
@@ -190,10 +165,7 @@ class NetworkManager(object):
 
     def draw_network(self):
         labels = {
-            node: node
-            + "".join(
-                f"\n{key}: {value}" for key, value in attrs.items() if key != "layer"
-            )
+            node: node + "".join(f"\n{key}: {value}" for key, value in attrs.items() if key != "layer")
             for node, attrs in self.network.nodes(data=True)
         }
         edge_labels = defaultdict(str)
@@ -202,9 +174,7 @@ class NetworkManager(object):
 
         # try draw_spectral, draw_planar, draw_spring, draw_networkx_labels, draw_networkx
         plt.figure(figsize=(10, 18))
-        pos = nx.multipartite_layout(
-            self.network, subset_key="layer", align="horizontal"
-        )
+        pos = nx.multipartite_layout(self.network, subset_key="layer", align="horizontal")
 
         nx.draw(
             self.network,
@@ -216,9 +186,7 @@ class NetworkManager(object):
             edge_color="gray",
             arrowsize=100,
         )
-        nx.draw_networkx_edge_labels(
-            self.network, pos, edge_labels=edge_labels, font_color="red"
-        )
+        nx.draw_networkx_edge_labels(self.network, pos, edge_labels=edge_labels, font_color="red")
         plt.show()
 
 

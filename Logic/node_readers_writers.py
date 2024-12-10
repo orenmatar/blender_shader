@@ -10,6 +10,10 @@ RESULT = "Result"
 
 seed_value_range = (0, 1000)
 
+# TODO: remove the \n from the beginning of every code, have a func to add line?
+# TODO: deliver the method for creating links between nodes to the node instances
+# TODO: allow outputs to depend on params? e.g. vector math output is "Value" not "Vector" if it is dot product
+
 
 class ParamType(Enum):
     VECTOR = 1
@@ -29,7 +33,7 @@ class ParamRequestType(Enum):
 
 @dataclass
 class Param:
-    name: str
+    name: Union[str, int]
     options_range: tuple
     default: Union[tuple, str, float]
     param_type: ParamType
@@ -54,7 +58,18 @@ def _convert_list_to_dict(some_list):
     return {input_.name: input_ for input_ in some_list}
 
 
+def is_string_or_np_str(obj):
+    return isinstance(obj, str) or isinstance(obj, np.str_)
+
+def _dict_to_string_params(some_dict):
+    param_list = []
+    for key, value in some_dict.items():
+        param_list.append(f"{key} = '{value}'" if is_string_or_np_str(value) else f"{key} = {value}")
+    return ",".join(param_list)
+
+
 class Node(object):
+    NAME = "GenericNode"
     NUMERIC: Dict = {}
     CATEGORICAL: Dict = {}
     OUTPUTS: Dict = {}
@@ -69,17 +84,29 @@ class Node(object):
         cls.CATEGORICAL = _convert_list_to_dict(getattr(cls, "CATEGORICAL", []))
         cls.OUTPUTS = _convert_list_to_dict(getattr(cls, "OUTPUTS", []))
         cls.SEED = _convert_list_to_dict(getattr(cls, "SEED", []))
+        cls.INPUT_MAPPING = cls.get_input_names_mapping()
         assert all(
             [x not in cls.NUMERIC for x in cls.CATEGORICAL]
         ), "Cannot use the same name in numeric and categorical"
 
-    def __init__(self, inputs, numeric, categorical, seeds=None):
+    def __init__(self, inputs, numeric, categorical, node_name, seeds=None):
         self.inputs = inputs
         self.numeric = numeric
         self.categorical = categorical
+        self.node_name = node_name
         if seeds is None:
             seeds = {}
         self.seeds = seeds
+
+    @classmethod
+    def get_input_names_mapping(cls):
+        return {name:f"'{name}'" for name in cls.NUMERIC}  # place name in "" as it is used to generate code later
+
+    def to_code(self, func_name):
+        params = {**self.numeric, **self.categorical}
+        string_params = _dict_to_string_params(params)
+        code = f'\n{self.node_name} = {func_name}("ShaderNode{self.NAME}", {string_params})'
+        return code
 
     @classmethod
     def get_node_type_params(cls, param_type: ParamRequestType, default_values=True):
@@ -94,27 +121,23 @@ class Node(object):
         elif param_type == ParamRequestType.NON_VECTOR_INPUT:
             all_params = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
             relevant_dict = {
-                key: value
-                for key, value in all_params.items()
-                if value.param_type != ParamType.VECTOR_INPUT
+                key: value for key, value in all_params.items() if value.param_type != ParamType.VECTOR_INPUT
             }
         else:
             raise ValueError
         if default_values:
             return {key: value.default for key, value in relevant_dict.items()}
         # if do not return default values - then return ranges
-        return {
-            key: (value.options_range, value.param_type)
-            for key, value in relevant_dict.items()
-        }
+        return {key: (value.options_range, value.param_type) for key, value in relevant_dict.items()}
 
     @classmethod
-    def properties_to_node_instance(cls, inputs, properties):
+    def properties_to_node_instance(cls, inputs, properties, node_name):
         numeric = {key: val for key, val in properties.items() if key in cls.NUMERIC}
-        categorical = {
-            key: val for key, val in properties.items() if key in cls.CATEGORICAL
-        }
-        return cls(inputs, numeric, categorical)
+        categorical = {key: val for key, val in properties.items() if key in cls.CATEGORICAL}
+        seeds = {key: val for key, val in properties.items() if key in cls.SEED}
+        if len(seeds):
+            return cls(inputs, numeric, categorical, node_name, seeds)
+        return cls(inputs, numeric, categorical, node_name)
 
     @classmethod
     def get_inputs(cls):
@@ -132,6 +155,15 @@ class Node(object):
     def get_random_output(cls):
         return np.random.choice(list(cls.OUTPUTS))
 
+    @staticmethod
+    def set_vector_code(node_name, vector_name, values, filter_zeros=False):
+        code = ""
+        for i, val in enumerate(values):
+            if val == 0 and filter_zeros:
+                continue
+            code += f"\n{node_name}.inputs[{vector_name}].default_value[{i}] = {val}"
+        return code
+
 
 class CombineXYZ(Node):
     NAME = "CombineXYZ"
@@ -142,8 +174,15 @@ class CombineXYZ(Node):
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeCombineXYZ")'
+        for key, val in self.numeric.items():
+            if val != 0:
+                code += f'\n{self.node_name}.inputs["{key}"].default_value = {val}'
+        return code
 
 
 class Mapping(Node):
@@ -155,8 +194,14 @@ class Mapping(Node):
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeMapping")'
+        for key, val in self.numeric.items():
+            code += self.set_vector_code(self.node_name, f"'{key}'", val, filter_zeros=True)
+        return code
 
 
 class Math(Node):
@@ -175,29 +220,42 @@ class Math(Node):
     ]
     OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    @classmethod
+    def get_input_names_mapping(cls):
+        return {'value_0':0, 'value_1': 1}
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params(self.categorical)
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeMath", {string_params})'
+        for key, value in self.numeric.items():
+            if value != 0:
+                in_name = self.INPUT_MAPPING[key]
+                code += f"\n{self.node_name}.inputs[{in_name}].default_value = {value}"
+        return code
 
 
 class MixFloat(Node):
     NAME = "MixFloat"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0, ParamType.FLOAT, False),
+        NumericInput("Factor", (-10, 10), 0.5, ParamType.FLOAT, False),
         NumericInput("A", (-10, 10), 0, ParamType.FLOAT, True),
         NumericInput("B", (-10, 10), 0, ParamType.FLOAT, True),
     ]
-    CATEGORICAL = [
-        Param(
-            "operation",
-            ("MIX", "MULTIPLY", "BURN", "DODGE", "ADD", "OVERLAY", "SUBTRACT"),
-            "ADD",
-            ParamType.CATEGORICAL,
-        )
-    ]
     OUTPUTS = [Output(RESULT, ParamType.FLOAT)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeMix")'
+        for key, value in self.numeric.items():
+            if value != 0:
+                in_name = key.replace("value_", "")
+                code += f'\n{self.node_name}.inputs["{in_name}"].default_value = {value}'
+        return code
 
 
 class MixVector(Node):
@@ -207,10 +265,29 @@ class MixVector(Node):
         NumericInput("A", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
         NumericInput("B", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
+    CATEGORICAL = [
+        Param(
+            "blend_type",
+            ("MIX", "MULTIPLY", "BURN", "DODGE", "ADD", "OVERLAY", "SUBTRACT"),
+            "ADD",
+            ParamType.CATEGORICAL,
+        )
+    ]
     OUTPUTS = [Output(RESULT, ParamType.VECTOR)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params(self.categorical)
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeMix", {string_params})'
+        code += f'\n{self.node_name}.data_type = "RGBA"'
+        for key, value in self.numeric.items():
+            if key == "Factor":
+                code += f'\n{self.node_name}.inputs["Factor"].default_value = {value}'
+            else:
+                code += self.set_vector_code(self.node_name, f"'{key}'", value, filter_zeros=True)
+        return code
 
 
 class SeparateXYZ(Node):
@@ -222,17 +299,29 @@ class SeparateXYZ(Node):
         Output("Z", ParamType.FLOAT),
     ]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeSeparateXYZ")'
+        code += self.set_vector_code(self.node_name, f"'Vector'", self.numeric["Vector"], filter_zeros=True)
+        return code
 
 
 class InputNode(Node):
     NAME = "InputNode"
-    OUTPUTS = [Output("Object", ParamType.VECTOR)]
+    OUTPUTS = [Output("Vector", ParamType.VECTOR)]
     SEED = [Param("Z Rotation", seed_value_range, 0, ParamType.SEED)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name, seeds):
+        super().__init__(inputs, numeric, categorical, node_name, seeds)
+
+    def to_code(self, func_name, node_tree_name="node_tree"):
+        code = f'\ninput_coor = {func_name}("ShaderNodeTexCoord")'
+        code += f'\n{self.node_name} = {func_name}("ShaderNodeMapping")'
+        code += f'\n{self.node_name}.inputs["Rotation"].default_value[2] = {self.seeds["Z Rotation"]}'
+        code += f'\n{node_tree_name}.links.new(input_coor.outputs["Object"], {self.node_name}.inputs["Vector"])'
+        return code
 
 
 class TexGabor(Node):
@@ -242,11 +331,21 @@ class TexGabor(Node):
         NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
         NumericInput("Frequency", (0, 10), 2, ParamType.FLOAT, False),
     ]
-    OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
+    OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
     SEED = [Param("Orientation", seed_value_range, 0, ParamType.SEED)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name, seeds):
+        super().__init__(inputs, numeric, categorical, node_name, seeds)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeTexGabor")'
+        set_params = {
+            **self.seeds,
+            **{key: val for key, val in self.numeric.items() if key != VECTOR},
+        }
+        for key, value in set_params.items():
+            code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
+        return code
 
 
 class TexGradient(Node):
@@ -264,8 +363,13 @@ class TexGradient(Node):
     ]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params(self.categorical)
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeTexGradient", {string_params})'
+        return code
 
 
 class TexNoise(Node):
@@ -279,8 +383,18 @@ class TexNoise(Node):
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
     SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name, seeds):
+        super().__init__(inputs, numeric, categorical, node_name, seeds)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeTexNoise", noise_dimensions="4D")'
+        set_params = {
+            **self.seeds,
+            **{key: val for key, val in self.numeric.items() if key != VECTOR},
+        }
+        for key, value in set_params.items():
+            code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
+        return code
 
 
 class TexVoronoiF(Node):
@@ -290,16 +404,23 @@ class TexVoronoiF(Node):
         NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
         NumericInput("Randomness", (0, 1), 1, ParamType.FLOAT, False),
     ]
-    CATEGORICAL = [
-        Param(
-            "distance", ("EUCLIDEAN", "CHEBYCHEV"), "EUCLIDEAN", ParamType.CATEGORICAL
-        )
-    ]
+    CATEGORICAL = [Param("distance", ("EUCLIDEAN", "CHEBYCHEV"), "EUCLIDEAN", ParamType.CATEGORICAL)]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
     SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name, seeds):
+        super().__init__(inputs, numeric, categorical, node_name, seeds)
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params(self.categorical)
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeTexVoronoi", {string_params}, voronoi_dimensions="4D")'
+        set_params = {
+            **self.seeds,
+            **{key: val for key, val in self.numeric.items() if key != VECTOR},
+        }
+        for key, value in set_params.items():
+            code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
+        return code
 
 
 class TexWave(Node):
@@ -313,8 +434,19 @@ class TexWave(Node):
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
     SEED = [Param("Phase Offset", seed_value_range, 0, ParamType.SEED)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name, seeds):
+        super().__init__(inputs, numeric, categorical, node_name, seeds)
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params(self.categorical)
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeTexWave", {string_params})'
+        set_params = {
+            **self.seeds,
+            **{key: val for key, val in self.numeric.items() if key != VECTOR},
+        }
+        for key, value in set_params.items():
+            code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
+        return code
 
 
 class ValToRGB(Node):
@@ -326,19 +458,31 @@ class ValToRGB(Node):
     ]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeValToRGB")'
+        code += f'\n{self.node_name}.inputs[0].default_value = {self.numeric["Fac"]}'
+        code += f'\n{self.node_name}.color_ramp.elements[0].position = {self.numeric["element_0"]}'
+        code += f'\n{self.node_name}.color_ramp.elements[1].position = {self.numeric["element_1"]}'
+        return code
 
 
 class Value(Node):
     NAME = "Value"
     NUMERIC = [
-        NumericInput(VALUE, (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput(VALUE, (-10, 10), 0, ParamType.FLOAT, False),
     ]
     OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeValue")'
+        code += f"\n{self.node_name}.outputs[0].default_value = {self.numeric[VALUE]}"
+        return code
 
 
 class VectorMath(Node):
@@ -356,7 +500,6 @@ class VectorMath(Node):
                 "MULTIPLY",
                 "DIVIDE",
                 "CROSS_PRODUCT",
-                "DOT_PRODUCT",
                 "ABSOLUTE",
             ),
             "ADD",
@@ -365,8 +508,21 @@ class VectorMath(Node):
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    @classmethod
+    def get_input_names_mapping(cls):
+        return {'vector_0':0, 'vector_1': 1}
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params(self.categorical)
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeVectorMath", {string_params})'
+        for key, value in self.numeric.items():
+            if value != 0:
+                in_name = self.INPUT_MAPPING[key]
+                code += self.set_vector_code(self.node_name, in_name, value, filter_zeros=True)
+        return code
 
 
 class OutputNode(Node):
@@ -375,5 +531,12 @@ class OutputNode(Node):
         NumericInput("Color", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
 
-    def __init__(self, inputs, numeric, categorical):
-        super().__init__(inputs, numeric, categorical)
+    def __init__(self, inputs, numeric, categorical, node_name):
+        super().__init__(inputs, numeric, categorical, node_name)
+
+    def to_code(self, func_name, node_tree_name="node_tree"):
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeEmission")'
+        code += f"\n{self.node_name}.inputs['Strength'].default_value = 1"
+        code += f'\noutput = {func_name}("ShaderNodeOutputMaterial")'
+        code += f'\n{node_tree_name}.links.new({self.node_name}.outputs["Emission"], output.inputs["Surface"])'
+        return code

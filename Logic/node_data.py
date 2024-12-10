@@ -373,9 +373,7 @@ blender_node_data = {
             "Phase": {"type": "vector"},
             "Value": {"type": "vector"},
         },
-        "params": {
-            "gabor_type": {"default": "2D", "options": ["2D", "3D"], "type": "enum"}
-        },
+        "params": {"gabor_type": {"default": "2D", "options": ["2D", "3D"], "type": "enum"}},
     },
     "TexGradient": {
         "inputs": [
