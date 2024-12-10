@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 
 
 class NetworkManager(object):
+    """
+    This class is responsible for managing the network (using networkx) of nodes.
+    """
     NODE_TYPES = {
         "CombineXYZ": CombineXYZ,
         "Mapping": Mapping,
@@ -30,10 +33,10 @@ class NetworkManager(object):
 
     def __init__(self):
         self.network = nx.MultiDiGraph()
-        self.node_counts = defaultdict(int)
-        self.free_inputs = {}
-        self.must_connect_to_inputs = {}
-        self.names_to_types = {}
+        self.node_counts = defaultdict(int) # node_name -> count of nodes of this type, so we can set unique names
+        self.free_inputs = {}  # node_name -> set of free inputs we can connect to at the moment
+        self.must_connect_to_inputs = {} # node_name -> set of inputs that must be connected to - vector inputs of textures
+        self.names_to_types = {} # node_name -> node_type, so we can get relevant properties
         for node_name, node_type in self.NODE_TYPES.items():
             node_vector_inputs = {
                 input_name
@@ -43,6 +46,10 @@ class NetworkManager(object):
             self.must_connect_to_inputs[node_name] = node_vector_inputs
 
     def initialize_network(self):
+        """
+        Initialize the network with input and output nodes
+        Counts the layers of the nodes - how far they are from the output node - for visualization purposes
+        """
         self.in_node_name, self.out_node_name = "InputNode", "OutputNode"
         self.add_node(OutputNode, self.out_node_name, {"layer": 1})
         in_properties = InputNode.get_node_type_params(ParamRequestType.ALL, default_values=True)
@@ -51,27 +58,39 @@ class NetworkManager(object):
         self.in_node_output_name = list(InputNode.get_outputs())[0]
 
     def get_random_param_values(self, param_type: ParamRequestType):
+        """
+        Get random values for all the nodes in the network, given a param type - seeds, numeric only, categorical...
+        """
         dist_vals = self.get_all_nodes_values(param_type, return_ranges=True, not_input_values=True)
         return self.pick_random_value_from_dict(dist_vals)
 
     def set_nodes_attributes(self, update_attributes: dict):
+        """
+        Set the attributes of the nodes in the network
+        """
         for node, attributes in update_attributes.items():
             for attr_name, value in attributes.items():
                 self.network.nodes[node][attr_name] = value
 
     def generate_random_network(self, n_additions=5):
-        # only after initialization (add assert)
+        """
+        Generate a random network by adding nodes and connecting them randomly
+        ONLY after initialization (consider adding assert)
+        """
         for i in range(n_additions):
+            # pick a free input
             free_inputs = [node_name for node_name, inputs in self.free_inputs.items() if len(inputs) > 0]
             if len(free_inputs) == 0:
                 break
             random_node = np.random.choice(free_inputs)
             random_in = np.random.choice(list(self.free_inputs[random_node]))
+            # pick a random node to connect to it
             new_node_type_name = np.random.choice(self.NODE_TYPES_FOR_GENERATION)
             out = self.NODE_TYPES[new_node_type_name].get_random_output()
             new_node_name = self.add_node_by_type(new_node_type_name)
             self.add_edge(new_node_name, random_node, out, random_in)
 
+        # connect all nodes that must be connected to the input node
         for node_name, free_inputs in self.free_inputs.items():
             for free_input in list(free_inputs):
                 if free_input in self.must_connect_to_inputs[self.node_name_to_node_type_name(node_name)]:
@@ -83,6 +102,9 @@ class NetworkManager(object):
                     )
 
     def add_node_by_type(self, node_type_name):
+        """
+        Add a node of a specific type to the network. Node name is unique - by the count of that type
+        """
         self.node_counts[node_type_name] += 1
         node_name = node_type_name + f"_{self.node_counts[node_type_name]}"
         node_type: Node = self.NODE_TYPES[node_type_name]
@@ -91,10 +113,16 @@ class NetworkManager(object):
         return node_name
 
     def get_node_connected_inputs(self, node):
+        """
+        Get the inputs that are connected to a specific node
+        """
         in_edges = self.network.in_edges(node, data=True)
         return [edge_properties["in"] for previous_node, self_node, edge_properties in in_edges]
 
     def get_all_nodes_values(self, param_type: ParamRequestType, return_ranges=False, not_input_values=True):
+        """
+        Get all the values of the nodes in the network, given a param type - seeds, numeric only, categorical...
+        """
         nodes = self.network.nodes(data=True)
         all_values = {}
         for node, values in nodes:
@@ -114,6 +142,9 @@ class NetworkManager(object):
 
     @staticmethod
     def pick_random_value_from_dict(nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]):
+        """
+        Pick a random value for each node param, from a dictionary of node params and their distributions
+        """
         result = {}
         for node, values in nodes_and_dist.items():
             node_rand_vals = {}
@@ -150,7 +181,10 @@ class NetworkManager(object):
         self.network.remove_edge(node1, node2, key=in2)
         self.free_inputs[node2].add(in2)
 
-    def to_node_instance(self, node_name):
+    def to_node_instance(self, node_name: str) -> Node:
+        """
+        Convert a node in the network to a node instance (from node_readers_writers.py)
+        """
         node_type_name = self.node_name_to_node_type_name(node_name)
         node_type = self.NODE_TYPES[node_type_name]
         node_data = self.network.nodes()[node_name]
@@ -158,12 +192,19 @@ class NetworkManager(object):
         return node_type.properties_to_node_instance(input_data, node_data, node_name)
 
     @staticmethod
-    def node_name_to_node_type_name(node_name):
+    def node_name_to_node_type_name(node_name: str) -> str:
+        """
+        Convert a node name to a node type name - simply remove the _i from the name
+        """
         if node_name in ["OutputNode", "InputNode"]:
             return node_name
         return node_name[:-2]  # remove _i from the name
 
     def draw_network(self):
+        """
+        Draw the network using networkx
+        """
+        # set the labels to include all the params of the node (otherwise it's just the name)
         labels = {
             node: node + "".join(f"\n{key}: {value}" for key, value in attrs.items() if key != "layer")
             for node, attrs in self.network.nodes(data=True)

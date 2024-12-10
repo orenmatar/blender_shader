@@ -41,6 +41,11 @@ class Param:
 
 @dataclass
 class NumericInput(Param):
+    """
+    A numeric input can be connected to another node or set to a value. In Blender all of these parameters can be
+    connected to another node, but here I limit some of them to be set to a value, for simplicity of the generation.
+    """
+
     as_input: bool
 
 
@@ -50,25 +55,46 @@ class Output:
     param_type: ParamType
 
 
-def _convert_list_to_dict(some_list):
+def _convert_list_to_dict(some_list) -> dict:
     """
-    For any list of Params or Outputs
-    :return:
+    For any list of Params or Outputs, convert it to a dictionary with the name as the key.
     """
     return {input_.name: input_ for input_ in some_list}
 
 
-def is_string_or_np_str(obj):
+def _is_string_or_np_str(obj) -> bool:
     return isinstance(obj, str) or isinstance(obj, np.str_)
 
-def _dict_to_string_params(some_dict):
+
+def _dict_to_string_params(some_dict) -> str:
+    """
+    Convert a dictionary to a string of parameters for a function call.
+    """
     param_list = []
     for key, value in some_dict.items():
-        param_list.append(f"{key} = '{value}'" if is_string_or_np_str(value) else f"{key} = {value}")
+        param_list.append(f"{key} = '{value}'" if _is_string_or_np_str(value) else f"{key} = {value}")
     return ",".join(param_list)
 
 
 class Node(object):
+    """
+    Base class for all nodes in the shader network. A converter between the networkx graph and Blender nodes.
+    Each subclass refers to a single node in the network, but can create several nodes and links in Blender.
+    e.g. the Output node creates an Emission node in Blender and links it to the Output node, the Input node creates
+    a Texture Coordinate node and a Mapping node and links them together.
+    Each subclass has a set of NUMERIC, CATEGORICAL, SEEDs and OUTPUTS parameters that define the node.
+    NUMERIC are parameters that can either get a value (e.g. "scale" for noise texture) or be connected to another node
+    like a vector input to a texture (This may be a poor design choice and they may need to be separated, but the mix is
+    complicated since numerics can always also be an input, but some vector inputs can't really be numeric - i.e.
+    can't be set to a value or stay unconnected).
+    CATEGORICAL are parameters that can take a value from a set of options (e.g. "operation" for math node).
+    Seeds are parameters that are used to generate random values (e.g. "W" for noise texture), the assumption is that
+    playing with these values will not change the texture in a meaningful way.
+    Each code is responsible for converting the node to Blender code that can be used to create the node in Blender.
+    Every node needs its own implementation of to_code since some need to change the names of the parameters to convert
+    to the Blender code.
+    """
+
     NAME = "GenericNode"
     NUMERIC: Dict = {}
     CATEGORICAL: Dict = {}
@@ -77,7 +103,7 @@ class Node(object):
 
     def __init_subclass__(cls, **kwargs):
         """
-        Automatically creates INPUT_DICT for any subclass based on its NUMERIC.
+        Automatically creates all required dictionaries from the lists of Params and Outputs.
         """
         super().__init_subclass__(**kwargs)
         cls.NUMERIC = _convert_list_to_dict(getattr(cls, "NUMERIC", []))
@@ -89,7 +115,7 @@ class Node(object):
             [x not in cls.NUMERIC for x in cls.CATEGORICAL]
         ), "Cannot use the same name in numeric and categorical"
 
-    def __init__(self, inputs, numeric, categorical, node_name, seeds=None):
+    def __init__(self, inputs: list, numeric: dict, categorical: dict, node_name: str, seeds: dict = None):
         self.inputs = inputs
         self.numeric = numeric
         self.categorical = categorical
@@ -100,16 +126,23 @@ class Node(object):
 
     @classmethod
     def get_input_names_mapping(cls):
-        return {name:f"'{name}'" for name in cls.NUMERIC}  # place name in "" as it is used to generate code later
+        return {name: f"'{name}'" for name in cls.NUMERIC}  # place name in "" as it is used to generate code later
 
-    def to_code(self, func_name):
+    def to_code(self, func_name: str) -> str:
+        """
+        Convert the node to code that can be used to create the node in Blender.
+        func_name is the name of the function that creates the node, e.g. "nodes_adder.create_node"
+        """
         params = {**self.numeric, **self.categorical}
         string_params = _dict_to_string_params(params)
         code = f'\n{self.node_name} = {func_name}("ShaderNode{self.NAME}", {string_params})'
         return code
 
     @classmethod
-    def get_node_type_params(cls, param_type: ParamRequestType, default_values=True):
+    def get_node_type_params(cls, param_type: ParamRequestType, default_values: bool = True):
+        """
+        Get the parameters of the node type.
+        """
         if param_type == ParamRequestType.SEED:
             relevant_dict = cls.SEED
         elif param_type == ParamRequestType.NUMERIC:
@@ -127,11 +160,14 @@ class Node(object):
             raise ValueError
         if default_values:
             return {key: value.default for key, value in relevant_dict.items()}
-        # if do not return default values - then return ranges
+        # if you should not return default values - then return ranges for random generation
         return {key: (value.options_range, value.param_type) for key, value in relevant_dict.items()}
 
     @classmethod
-    def properties_to_node_instance(cls, inputs, properties, node_name):
+    def properties_to_node_instance(cls, inputs: list, properties: dict, node_name: str) -> "Node":
+        """
+        Takes properties as stored by the networkx graph and creates a node instance.
+        """
         numeric = {key: val for key, val in properties.items() if key in cls.NUMERIC}
         categorical = {key: val for key, val in properties.items() if key in cls.CATEGORICAL}
         seeds = {key: val for key, val in properties.items() if key in cls.SEED}
@@ -140,23 +176,36 @@ class Node(object):
         return cls(inputs, numeric, categorical, node_name)
 
     @classmethod
-    def get_inputs(cls):
+    def get_inputs(cls) -> Dict:
+        """
+        Get the possible numeric inputs of the node type.
+        """
         return {key: val for key, val in cls.NUMERIC.items() if val.as_input}
 
     @classmethod
-    def get_outputs(cls):
+    def get_outputs(cls) -> Dict:
         return cls.OUTPUTS
 
     @classmethod
-    def get_node_type_free_inputs(cls):
+    def get_node_type_free_inputs(cls) -> Set:
+        """
+        Get the inputs that can be connected to another node
+        """
         return {key for key, param in cls.NUMERIC.items() if param.as_input}
 
     @classmethod
-    def get_random_output(cls):
+    def get_random_output(cls) -> str:
         return np.random.choice(list(cls.OUTPUTS))
 
     @staticmethod
-    def set_vector_code(node_name, vector_name, values, filter_zeros=False):
+    def set_vector_code(node_name: str, vector_name: str, values: list, filter_zeros=False) -> str:
+        """
+        Write code for Blender to set the values of a whole vector.
+        e.g.
+        node.inputs['Vector'].default_value[0] = 0.4
+        node.inputs['Vector'].default_value[1] = 0  # this will be skipped if filter_zeros is True
+        node.inputs['Vector'].default_value[2] = 2
+        """
         code = ""
         for i, val in enumerate(values):
             if val == 0 and filter_zeros:
@@ -180,7 +229,7 @@ class CombineXYZ(Node):
     def to_code(self, func_name):
         code = f'\n{self.node_name} = {func_name}("ShaderNodeCombineXYZ")'
         for key, val in self.numeric.items():
-            if val != 0:
+            if val != 0:  # the default is 0 so no need to create a line for it
                 code += f'\n{self.node_name}.inputs["{key}"].default_value = {val}'
         return code
 
@@ -225,14 +274,17 @@ class Math(Node):
 
     @classmethod
     def get_input_names_mapping(cls):
-        return {'value_0':0, 'value_1': 1}
+        """
+        Converts the names of the inputs to the Blender names - simple 0, 1 in Blender.
+        """
+        return {"value_0": 0, "value_1": 1}
 
     def to_code(self, func_name):
         string_params = _dict_to_string_params(self.categorical)
         code = f'\n{self.node_name} = {func_name}("ShaderNodeMath", {string_params})'
         for key, value in self.numeric.items():
             if value != 0:
-                in_name = self.INPUT_MAPPING[key]
+                in_name = self.INPUT_MAPPING[key]  # get the Blender name of the input
                 code += f"\n{self.node_name}.inputs[{in_name}].default_value = {value}"
         return code
 
@@ -252,9 +304,7 @@ class MixFloat(Node):
     def to_code(self, func_name):
         code = f'\n{self.node_name} = {func_name}("ShaderNodeMix")'
         for key, value in self.numeric.items():
-            if value != 0:
-                in_name = key.replace("value_", "")
-                code += f'\n{self.node_name}.inputs["{in_name}"].default_value = {value}'
+            code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
         return code
 
 
@@ -281,6 +331,7 @@ class MixVector(Node):
     def to_code(self, func_name):
         string_params = _dict_to_string_params(self.categorical)
         code = f'\n{self.node_name} = {func_name}("ShaderNodeMix", {string_params})'
+        # set to RGBA since it should receive a vector, otherwise it's the same node as MixFloat
         code += f'\n{self.node_name}.data_type = "RGBA"'
         for key, value in self.numeric.items():
             if key == "Factor":
@@ -339,10 +390,7 @@ class TexGabor(Node):
 
     def to_code(self, func_name):
         code = f'\n{self.node_name} = {func_name}("ShaderNodeTexGabor")'
-        set_params = {
-            **self.seeds,
-            **{key: val for key, val in self.numeric.items() if key != VECTOR},
-        }
+        set_params = {**self.seeds, **{key: val for key, val in self.numeric.items() if key != VECTOR}}
         for key, value in set_params.items():
             code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
         return code
@@ -350,9 +398,7 @@ class TexGabor(Node):
 
 class TexGradient(Node):
     NAME = "TexGradient"
-    NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-    ]
+    NUMERIC = [NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True)]
     CATEGORICAL = [
         Param(
             "gradient_type",
@@ -513,7 +559,7 @@ class VectorMath(Node):
 
     @classmethod
     def get_input_names_mapping(cls):
-        return {'vector_0':0, 'vector_1': 1}
+        return {"vector_0": 0, "vector_1": 1}
 
     def to_code(self, func_name):
         string_params = _dict_to_string_params(self.categorical)

@@ -61,6 +61,10 @@ def clean_scene():
 
 
 def set_for_texture_generation():
+    """
+    Set the scene for texture generation
+    Add a plane, set the camera to be above it looking down, and set the background to be black
+    """
     bpy.ops.mesh.primitive_plane_add(size=2, enter_editmode=False, align="WORLD", location=(0, 0, 0), scale=(1, 1, 1))
     bpy.ops.object.camera_add(location=(0, 0, 2.5))
     bpy.context.scene.camera = bpy.context.object
@@ -69,26 +73,31 @@ def set_for_texture_generation():
 
 
 def settings_for_texture_generation(path, resolution=512):
+    """
+    Set the render settings for texture generation
+    :param path: file path to save the texture
+    :param resolution:
+    """
     scene = bpy.data.scenes["Scene"]
     scene.render.resolution_x = resolution
     scene.render.resolution_y = resolution
-    scene.render.image_settings.color_mode = "BW"
-    bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"  # ('BLENDER_EEVEE_NEXT', 'BLENDER_WORKBENCH', 'CYCLES')
+    scene.render.image_settings.color_mode = "BW"  # black and white for now
+    bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"
     bpy.context.scene.render.filepath = path
     bpy.context.scene.render.image_settings.file_format = "PNG"
-    bpy.context.scene.render.use_simplify = True
-    bpy.context.scene.eevee.use_shadows = False
-    bpy.context.scene.eevee.taa_render_samples = 1
-    bpy.context.scene.view_settings.view_transform = "Standard"
+    bpy.context.scene.render.use_simplify = True  # to speed up the rendering
+    bpy.context.scene.eevee.use_shadows = False  # to speed up the rendering
+    bpy.context.scene.eevee.taa_render_samples = 1  # to speed up the rendering
+    bpy.context.scene.view_settings.view_transform = "Standard"  # to speed up the rendering
 
 
 class NodesAdder(object):
     def __init__(self, tree, node_distance=250):
-        self.x_location = 0
+        self.x_location = 0  # keeps track of the x location of the node, so they don't overlap
         self.tree = tree
         self.node_distance = node_distance
 
-    def create_node(self, node_type, **kwargs):
+    def create_node(self, node_type: str, **kwargs):
         node = self.tree.nodes.new(type=node_type)
         node.location.x = self.x_location
         self.x_location += self.node_distance
