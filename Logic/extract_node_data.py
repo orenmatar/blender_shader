@@ -4,7 +4,7 @@ import mathutils
 
 
 def get_shader_node_by_name(name):
-    return bpy.data.node_groups.new("TempGroup", "ShaderNodeTree").nodes.new(
+    return bpy.data.node_groups.new("TempGroup", "ShaderNodeTree").to_nodes.new(
         "ShaderNode" + name
     )
 
@@ -61,7 +61,7 @@ def get_shader_node_data():
             try:
                 temp_node = bpy.data.node_groups.new(
                     "TempGroup", "ShaderNodeTree"
-                ).nodes.new(node)
+                ).to_nodes.new(node)
             except:
                 continue
 

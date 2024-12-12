@@ -183,6 +183,10 @@ class Node(object):
         return {key: val for key, val in cls.NUMERIC.items() if val.as_input}
 
     @classmethod
+    def get_random_input(cls) -> str:
+        return np.random.choice(list(cls.get_node_type_free_inputs()))
+
+    @classmethod
     def get_outputs(cls) -> Dict:
         return cls.OUTPUTS
 
@@ -238,8 +242,8 @@ class Mapping(Node):
     NAME = "Mapping"
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
-        NumericInput("Scale", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, False),
+        NumericInput("Scale", (-10, 10), (0, 0, 0), ParamType.VECTOR, False),
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
@@ -292,7 +296,7 @@ class Math(Node):
 class MixFloat(Node):
     NAME = "MixFloat"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0.5, ParamType.FLOAT, False),
+        NumericInput("Factor", (-10, 10), 0.5, ParamType.FLOAT, True),
         NumericInput("A", (-10, 10), 0, ParamType.FLOAT, True),
         NumericInput("B", (-10, 10), 0, ParamType.FLOAT, True),
     ]
@@ -311,7 +315,7 @@ class MixFloat(Node):
 class MixVector(Node):
     NAME = "MixVector"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0, ParamType.FLOAT, False),
+        NumericInput("Factor", (-10, 10), 0, ParamType.FLOAT, True),
         NumericInput("A", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
         NumericInput("B", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
@@ -434,10 +438,8 @@ class TexNoise(Node):
 
     def to_code(self, func_name):
         code = f'\n{self.node_name} = {func_name}("ShaderNodeTexNoise", noise_dimensions="4D")'
-        set_params = {
-            **self.seeds,
-            **{key: val for key, val in self.numeric.items() if key != VECTOR},
-        }
+        # params - seeds and numeric except for the vector input
+        set_params = {**self.seeds, **{key: val for key, val in self.numeric.items() if key != VECTOR}}
         for key, value in set_params.items():
             code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
         return code

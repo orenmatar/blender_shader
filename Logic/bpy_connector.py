@@ -66,10 +66,10 @@ def set_for_texture_generation():
     Add a plane, set the camera to be above it looking down, and set the background to be black
     """
     bpy.ops.mesh.primitive_plane_add(size=2, enter_editmode=False, align="WORLD", location=(0, 0, 0), scale=(1, 1, 1))
-    bpy.ops.object.camera_add(location=(0, 0, 2.5))
+    bpy.ops.object.camera_add(location=(0, 0, 2.75))  # at 2.75 we see the entire plane
     bpy.context.scene.camera = bpy.context.object
     bpy.data.objects["Camera"].rotation_euler = (0, 0, 0)
-    bpy.data.worlds["World"].node_tree.nodes["Background"].inputs[0].default_value = (0, 0, 0, 0)
+    bpy.data.worlds["World"].node_tree.to_nodes["Background"].inputs[0].default_value = (0, 0, 0, 0)
 
 
 def settings_for_texture_generation(path, resolution=512):
@@ -98,7 +98,7 @@ class NodesAdder(object):
         self.node_distance = node_distance
 
     def create_node(self, node_type: str, **kwargs):
-        node = self.tree.nodes.new(type=node_type)
+        node = self.tree.to_nodes.new(type=node_type)
         node.location.x = self.x_location
         self.x_location += self.node_distance
         for attr, value in kwargs.items():

@@ -30,6 +30,26 @@ class NetworkManager(object):
         "InputNode": InputNode,
     }
     NODE_TYPES_FOR_GENERATION = [node_name for node_name in NODE_TYPES if node_name not in ["OutputNode", "InputNode"]]
+    INITIALIZATION_CODE = """import bpy
+import sys
+sys.path.append('/Users/orenm/BlenderShaderProject/project_files/')
+
+from Logic.bpy_connector import clean_scene, set_for_texture_generation, settings_for_texture_generation, NodesAdder
+
+path = '/Users/orenm/Desktop/test.png'
+clean_scene()
+set_for_texture_generation()
+settings_for_texture_generation(path = path, resolution=512)
+
+material = bpy.data.materials.new(name='my_material')
+material.use_nodes = True
+bpy.data.objects['Plane'].data.materials.append(material)
+nodes = material.node_tree.nodes
+links = material.node_tree.links
+[nodes.remove(n) for n in nodes]
+node_tree = material.node_tree
+nodes_adder = NodesAdder(material.node_tree)
+    """
 
     def __init__(self):
         self.network = nx.MultiDiGraph()
@@ -87,9 +107,11 @@ class NetworkManager(object):
             # pick a random node to connect to it
             new_node_type_name = np.random.choice(self.NODE_TYPES_FOR_GENERATION)
             out = self.NODE_TYPES[new_node_type_name].get_random_output()
-            new_node_name = self.add_node_by_type(new_node_type_name)
+            new_node_name = self.add_node_by_type_name(new_node_type_name)
             self.add_edge(new_node_name, random_node, out, random_in)
+        self.finish_network()
 
+    def finish_network(self):
         # connect all nodes that must be connected to the input node
         for node_name, free_inputs in self.free_inputs.items():
             for free_input in list(free_inputs):
@@ -101,7 +123,7 @@ class NetworkManager(object):
                         free_input,
                     )
 
-    def add_node_by_type(self, node_type_name):
+    def add_node_by_type_name(self, node_type_name):
         """
         Add a node of a specific type to the network. Node name is unique - by the count of that type
         """
@@ -171,10 +193,11 @@ class NetworkManager(object):
         # TODO: make sure to remove inputs from free input dict, must_connect_to_inputs...
         raise NotImplementedError
 
-    def add_edge(self, node1, node2, out1, in2):
+    def add_edge(self, node1, node2, out1, in2, calc_layer=True):
         assert in2 in self.free_inputs[node2], "Input must be free"
         self.network.add_edge(node1, node2, **{"out": out1, "in": in2}, key=in2)
-        self.network.nodes[node1]["layer"] = self.network.nodes[node2]["layer"] + 1
+        if calc_layer:
+            self.network.nodes[node1]["layer"] = self.network.nodes[node2]["layer"] + 1
         self.free_inputs[node2].remove(in2)
 
     def remove_edge(self, node1, node2, in2):
@@ -191,6 +214,13 @@ class NetworkManager(object):
         input_data = [x[2]["in"] for x in self.network.in_edges(node_name, data=True)]
         return node_type.properties_to_node_instance(input_data, node_data, node_name)
 
+    def node_name_to_node_type(self, node_name: str) -> type(Node):
+        """
+        Convert a node name to a node type name - simply remove the _i from the name
+        """
+        type_name = self.node_name_to_node_type_name(node_name)
+        return self.NODE_TYPES[type_name]
+
     @staticmethod
     def node_name_to_node_type_name(node_name: str) -> str:
         """
@@ -198,7 +228,7 @@ class NetworkManager(object):
         """
         if node_name in ["OutputNode", "InputNode"]:
             return node_name
-        return node_name[:-2]  # remove _i from the name
+        return node_name.split('_')[0]  # remove _i from the name
 
     def draw_network(self):
         """
@@ -229,6 +259,28 @@ class NetworkManager(object):
         )
         nx.draw_networkx_edge_labels(self.network, pos, edge_labels=edge_labels, font_color="red")
         plt.show()
+
+    def generate_code(self, with_initialization=True):
+        """
+        Generate the code for the network
+        """
+        # generating by order of layer, so output is last
+        layers = defaultdict(list)
+        for node_name, data in self.network.nodes(data=True):
+            layers[data['layer']].append(node_name)
+
+        code = ""
+        for i in range(max(layers), 0, -1):
+            for node_name in layers[i]:
+                node_instance = self.to_node_instance(node_name)
+                code += node_instance.to_code("nodes_adder.create_node")
+
+        for out1, in2, data in self.network.edges(data=True):
+            input_mapping = self.names_to_types[in2].INPUT_MAPPING
+            code += f"\nnode_tree.links.new({out1}.outputs['{data['out']}'], {in2}.inputs[{input_mapping[data['in']]}])"
+        if with_initialization:
+            code = self.INITIALIZATION_CODE + code
+        return code
 
 
 if __name__ == "__main__":
