@@ -243,7 +243,7 @@ class Mapping(Node):
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
         NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, False),
-        NumericInput("Scale", (-10, 10), (0, 0, 0), ParamType.VECTOR, False),
+        NumericInput("Scale", (0, 10), (0, 0, 0), ParamType.VECTOR, False),
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
@@ -296,9 +296,9 @@ class Math(Node):
 class MixFloat(Node):
     NAME = "MixFloat"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0.5, ParamType.FLOAT, True),
-        NumericInput("A", (-10, 10), 0, ParamType.FLOAT, True),
-        NumericInput("B", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("Factor", (0, 1), 0.5, ParamType.FLOAT, True),
+        NumericInput("A", (0, 1), 0, ParamType.FLOAT, True),
+        NumericInput("B", (0, 1), 0, ParamType.FLOAT, True),
     ]
     OUTPUTS = [Output(RESULT, ParamType.FLOAT)]
 
@@ -315,9 +315,9 @@ class MixFloat(Node):
 class MixVector(Node):
     NAME = "MixVector"
     NUMERIC = [
-        NumericInput("Factor", (-10, 10), 0, ParamType.FLOAT, True),
-        NumericInput("A", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
-        NumericInput("B", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("Factor", (0, 1), 0, ParamType.FLOAT, True),
+        NumericInput("A", (0, 1), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("B", (0, 1), (0, 0, 0), ParamType.VECTOR, True),
     ]
     CATEGORICAL = [
         Param(
@@ -366,6 +366,8 @@ class SeparateXYZ(Node):
 class InputNode(Node):
     NAME = "InputNode"
     OUTPUTS = [Output("Vector", ParamType.VECTOR)]
+    NUMERIC = [NumericInput("X location", (-1, 1), 0, ParamType.FLOAT, False)]
+    # just rotating the whole texture counts as a "seed" since it creates a non-meaningful change to the texture
     SEED = [Param("Z Rotation", seed_value_range, 0, ParamType.SEED)]
 
     def __init__(self, inputs, numeric, categorical, node_name, seeds):
@@ -374,6 +376,7 @@ class InputNode(Node):
     def to_code(self, func_name, node_tree_name="node_tree"):
         code = f'\ninput_coor = {func_name}("ShaderNodeTexCoord")'
         code += f'\n{self.node_name} = {func_name}("ShaderNodeMapping")'
+        code += f'\n{self.node_name}.inputs["Location"].default_value[0] = {self.numeric["X location"]}'
         code += f'\n{self.node_name}.inputs["Rotation"].default_value[2] = {self.seeds["Z Rotation"]}'
         code += f'\n{node_tree_name}.links.new(input_coor.outputs["Object"], {self.node_name}.inputs["Vector"])'
         return code
@@ -500,7 +503,7 @@ class TexWave(Node):
 class ValToRGB(Node):
     NAME = "ValToRGB"
     NUMERIC = [
-        NumericInput("Fac", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("Fac", (0, 1), 0, ParamType.FLOAT, True),
         NumericInput("element_0", (0, 1), 0, ParamType.FLOAT, False),
         NumericInput("element_1", (0, 1), 1, ParamType.FLOAT, False),
     ]
@@ -549,6 +552,7 @@ class VectorMath(Node):
                 "DIVIDE",
                 "CROSS_PRODUCT",
                 "ABSOLUTE",
+                "FRACTION"
             ),
             "ADD",
             ParamType.CATEGORICAL,

@@ -7,10 +7,18 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 
+def sample_uniform(low=0, high=10, size=1):
+    return np.random.uniform(low=low, high=high, size=size)
+
+def sample_log_scale(low=0, high=10, power=3, size=1):
+    x = np.random.uniform(0, 1, size=size)
+    return low + (high - low) * (x ** power)
+
 class NetworkManager(object):
     """
     This class is responsible for managing the network (using networkx) of nodes.
     """
+
     NODE_TYPES = {
         "CombineXYZ": CombineXYZ,
         "Mapping": Mapping,
@@ -29,6 +37,8 @@ class NetworkManager(object):
         "OutputNode": OutputNode,
         "InputNode": InputNode,
     }
+    OutputNodeNAME = "OutputNode"
+    InputNodeNAME = "InputNode"
     NODE_TYPES_FOR_GENERATION = [node_name for node_name in NODE_TYPES if node_name not in ["OutputNode", "InputNode"]]
     INITIALIZATION_CODE = """import bpy
 import sys
@@ -53,36 +63,39 @@ nodes_adder = NodesAdder(material.node_tree)
 
     def __init__(self):
         self.network = nx.MultiDiGraph()
-        self.node_counts = defaultdict(int) # node_name -> count of nodes of this type, so we can set unique names
+        self.node_counts = defaultdict(int)  # node_name -> count of nodes of this type, so we can set unique names
         self.free_inputs = {}  # node_name -> set of free inputs we can connect to at the moment
-        self.must_connect_to_inputs = {} # node_name -> set of inputs that must be connected to - vector inputs of textures
-        self.names_to_types = {} # node_name -> node_type, so we can get relevant properties
-        for node_name, node_type in self.NODE_TYPES.items():
-            node_vector_inputs = {
-                input_name
-                for input_name, input_type in node_type.get_inputs().items()
-                if input_type.param_type == ParamType.VECTOR_INPUT
-            }
-            self.must_connect_to_inputs[node_name] = node_vector_inputs
+        self.in_node_name, self.out_node_name = "InputNode_1", "OutputNode_1"
+        self.node_value_ranges_name = "node_value_ranges"
 
     def initialize_network(self):
         """
         Initialize the network with input and output nodes
-        Counts the layers of the nodes - how far they are from the output node - for visualization purposes
         """
-        self.in_node_name, self.out_node_name = "InputNode", "OutputNode"
-        self.add_node(OutputNode, self.out_node_name, {"layer": 1})
-        in_properties = InputNode.get_node_type_params(ParamRequestType.ALL, default_values=True)
-        in_properties["layer"] = 1  # input layer incase nothing is connected to it
-        self.add_node(InputNode, self.in_node_name, in_properties)
-        self.in_node_output_name = list(InputNode.get_outputs())[0]
+        self.out_node_name = self.add_node_by_type_name(self.OutputNodeNAME)
+        self.in_node_name = self.add_node_by_type_name(self.InputNodeNAME)
 
-    def get_random_param_values(self, param_type: ParamRequestType):
+    def apply_distribution_limitations(self, nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]):
+        """
+        Given a dict of nodes and their distribution for sample - apply their limitations (if any are saved on them),
+        narrowing the distribution.
+        """
+        for node_name, distributions in nodes_and_dist.items():
+            # take the limitations from the node on the network
+            node_distribution_limitations = self.network.nodes(self.node_value_ranges_name)[node_name]
+            if node_distribution_limitations is not None:
+                for attr_name, new_dist in node_distribution_limitations.items():
+                    # set new distribution
+                    distributions[attr_name] = (new_dist, distributions[attr_name][1])
+
+    def get_random_param_values(self, param_type: ParamRequestType, with_limitations=True):
         """
         Get random values for all the nodes in the network, given a param type - seeds, numeric only, categorical...
         """
         dist_vals = self.get_all_nodes_values(param_type, return_ranges=True, not_input_values=True)
-        return self.pick_random_value_from_dict(dist_vals)
+        if with_limitations:
+            self.apply_distribution_limitations(dist_vals)
+        return self.pick_random_values_from_dict(dist_vals)
 
     def set_nodes_attributes(self, update_attributes: dict):
         """
@@ -97,6 +110,7 @@ nodes_adder = NodesAdder(material.node_tree)
         Generate a random network by adding nodes and connecting them randomly
         ONLY after initialization (consider adding assert)
         """
+        assert self.out_node_name in self.network.nodes, "Network must be initialized"
         for i in range(n_additions):
             # pick a free input
             free_inputs = [node_name for node_name, inputs in self.free_inputs.items() if len(inputs) > 0]
@@ -112,26 +126,46 @@ nodes_adder = NodesAdder(material.node_tree)
         self.finish_network()
 
     def finish_network(self):
-        # connect all nodes that must be connected to the input node
+        """
+        Finish the network by connecting all the nodes that must be connected to the input node
+        """
+        assert self.out_node_name in self.network.nodes, "Network must be initialized"
+        # node_name -> set of inputs that must be connected to - (vector inputs)
+        must_connect_to_inputs = {}
+        for node_name, node_type in self.NODE_TYPES.items():
+            node_vector_inputs = {
+                input_name
+                for input_name, input_type in node_type.get_inputs().items()
+                if input_type.param_type == ParamType.VECTOR_INPUT  # VECTOR_INPUT must be connected to something
+            }
+            must_connect_to_inputs[node_name] = node_vector_inputs
+
+        # connect free inputs that need a connection to the input node
+        input_node_output_name = list(InputNode.get_outputs())[0]
         for node_name, free_inputs in self.free_inputs.items():
             for free_input in list(free_inputs):
-                if free_input in self.must_connect_to_inputs[self.node_name_to_node_type_name(node_name)]:
-                    self.add_edge(
-                        self.in_node_name,
-                        node_name,
-                        self.in_node_output_name,
-                        free_input,
-                    )
+                if free_input in must_connect_to_inputs[self.node_name_to_node_type_name(node_name)]:
+                    self.add_edge(self.in_node_name, node_name, input_node_output_name, free_input)
+
+        self.calc_layers()
+
+    def set_node_distribution_limitations(self, node_name, dist):
+        """
+        Set the distribution limitations for a specific node attribute
+        """
+        self.network.nodes[node_name][self.node_value_ranges_name] = dist
 
     def add_node_by_type_name(self, node_type_name):
         """
         Add a node of a specific type to the network. Node name is unique - by the count of that type
         """
+        if node_type_name in {self.OutputNodeNAME, self.InputNodeNAME}:
+            assert self.node_counts[node_type_name] == 0, "Only one input and output node allowed"
         self.node_counts[node_type_name] += 1
         node_name = node_type_name + f"_{self.node_counts[node_type_name]}"
         node_type: Node = self.NODE_TYPES[node_type_name]
         properties = node_type.get_node_type_params(ParamRequestType.ALL, default_values=True)
-        self.add_node(node_type, node_name, properties)
+        self._add_node(node_type, node_name, properties)
         return node_name
 
     def get_node_connected_inputs(self, node):
@@ -163,7 +197,7 @@ nodes_adder = NodesAdder(material.node_tree)
         return all_values
 
     @staticmethod
-    def pick_random_value_from_dict(nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]):
+    def pick_random_values_from_dict(nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]):
         """
         Pick a random value for each node param, from a dictionary of node params and their distributions
         """
@@ -172,9 +206,9 @@ nodes_adder = NodesAdder(material.node_tree)
             node_rand_vals = {}
             for attr_name, (dist, attr_type) in values.items():
                 if attr_type in [ParamType.FLOAT, ParamType.SEED]:
-                    value = np.random.uniform(low=dist[0], high=dist[1])
+                    value = float(sample_uniform(low=dist[0], high=dist[1], size=1).round(1)[0])
                 elif attr_type == ParamType.VECTOR:
-                    value = tuple(np.random.uniform(low=dist[0], high=dist[1], size=3))
+                    value = tuple(sample_uniform(low=dist[0], high=dist[1], size=3).round(1))
                 elif attr_type == ParamType.CATEGORICAL:
                     value = np.random.choice(dist)
                 else:
@@ -183,26 +217,37 @@ nodes_adder = NodesAdder(material.node_tree)
             result[node] = node_rand_vals
         return result
 
-    def add_node(self, node_type, node_name, properties):
+    def _add_node(self, node_type, node_name, properties):
+        """
+        Adds a note to the network, and keeps track of its inputs
+        """
         self.network.add_node(node_name, **properties)
         free_inputs = node_type.get_node_type_free_inputs()
         self.free_inputs[node_name] = free_inputs
-        self.names_to_types[node_name] = node_type
 
     def remove_node(self, node1):
         # TODO: make sure to remove inputs from free input dict, must_connect_to_inputs...
         raise NotImplementedError
 
-    def add_edge(self, node1, node2, out1, in2, calc_layer=True):
+    def add_edge(self, node1, node2, out1, in2):
         assert in2 in self.free_inputs[node2], "Input must be free"
         self.network.add_edge(node1, node2, **{"out": out1, "in": in2}, key=in2)
-        if calc_layer:
-            self.network.nodes[node1]["layer"] = self.network.nodes[node2]["layer"] + 1
         self.free_inputs[node2].remove(in2)
 
-    def remove_edge(self, node1, node2, in2):
+    def _remove_edge(self, node1, node2, in2):
         self.network.remove_edge(node1, node2, key=in2)
         self.free_inputs[node2].add(in2)
+
+    def calc_layers(self):
+        """
+        Calculates the layers of the nodes - their distance from output. Layer is important for visualization
+        """
+        assert self.out_node_name in self.network.nodes, "Network must be initialized"
+        lengths = nx.shortest_path_length(self.network.reverse(copy=False), self.out_node_name)
+        for node, length in lengths.items():
+            self.network.nodes[node]["layer"] = length + 1
+        if self.in_node_name not in lengths:  # in case it wasn't connected
+            self.network.nodes[self.in_node_name]["layer"] = 15
 
     def to_node_instance(self, node_name: str) -> Node:
         """
@@ -210,7 +255,7 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         node_type_name = self.node_name_to_node_type_name(node_name)
         node_type = self.NODE_TYPES[node_type_name]
-        node_data = self.network.nodes()[node_name]
+        node_data = self.network.nodes[node_name]
         input_data = [x[2]["in"] for x in self.network.in_edges(node_name, data=True)]
         return node_type.properties_to_node_instance(input_data, node_data, node_name)
 
@@ -226,17 +271,16 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         Convert a node name to a node type name - simply remove the _i from the name
         """
-        if node_name in ["OutputNode", "InputNode"]:
-            return node_name
-        return node_name.split('_')[0]  # remove _i from the name
+        return node_name.split("_")[0]  # remove _i from the name
 
     def draw_network(self):
         """
         Draw the network using networkx
         """
         # set the labels to include all the params of the node (otherwise it's just the name)
+        dont_include_params = {"layer", self.node_value_ranges_name}
         labels = {
-            node: node + "".join(f"\n{key}: {value}" for key, value in attrs.items() if key != "layer")
+            node: node + "".join(f"\n{key}: {value}" for key, value in attrs.items() if key not in dont_include_params)
             for node, attrs in self.network.nodes(data=True)
         }
         edge_labels = defaultdict(str)
@@ -260,14 +304,14 @@ nodes_adder = NodesAdder(material.node_tree)
         nx.draw_networkx_edge_labels(self.network, pos, edge_labels=edge_labels, font_color="red")
         plt.show()
 
-    def generate_code(self, with_initialization=True):
+    def generate_code(self, with_initialization_code=False):
         """
         Generate the code for the network
         """
         # generating by order of layer, so output is last
         layers = defaultdict(list)
         for node_name, data in self.network.nodes(data=True):
-            layers[data['layer']].append(node_name)
+            layers[data["layer"]].append(node_name)
 
         code = ""
         for i in range(max(layers), 0, -1):
@@ -276,9 +320,9 @@ nodes_adder = NodesAdder(material.node_tree)
                 code += node_instance.to_code("nodes_adder.create_node")
 
         for out1, in2, data in self.network.edges(data=True):
-            input_mapping = self.names_to_types[in2].INPUT_MAPPING
+            input_mapping = self.node_name_to_node_type(in2).INPUT_MAPPING
             code += f"\nnode_tree.links.new({out1}.outputs['{data['out']}'], {in2}.inputs[{input_mapping[data['in']]}])"
-        if with_initialization:
+        if with_initialization_code:
             code = self.INITIALIZATION_CODE + code
         return code
 

@@ -16,7 +16,11 @@ mix_vector = ("MixVector",)
 mapping = ("Mapping",)
 sep = ("SeparateXYZ",)
 math_float = ("Math",)
+vector_math = ("VectorMath",)
+either_math = ("Math", "VectorMath")
 ramp = ("ValToRGB",)
+combine = ("CombineXYZ",)
+value = ("Value",)
 
 
 class InOutType(Enum):
@@ -35,10 +39,10 @@ class SubMetaNode:
 @dataclass
 class Con:  # Connection for short
     from_node: str  # name of the node to connect from
-    to_nodes: List[str]  # names of nodes to connect to
-    # names of inputs to choose randomly from. If None then random from all free inputs.
+    to_node: str  # names of node to connect to
+    # names of possible inputs in to_node. If None then random from all free inputs.
     in_names: Optional[List[str]] = None
-    # names of outputs to use from the first node. If None then random. Must be the same length as to_nodes
+    # names of possible output to use from the from_node. If None then random.
     out_names: Optional[List[str]] = None
 
 
@@ -52,14 +56,14 @@ class MetaNode(object):
     required_output_type: InOutType = InOutType.ANY
     required_input_type: InOutType = InOutType.ANY
 
-    def get_in_connection(self):
-        return [con for con in self.connections if con.from_node == IN][0]
+    def get_in_connections(self):
+        return [con for con in self.connections if con.from_node == IN]
 
     def get_out_connection(self):
         return [con for con in self.connections if con.from_node == OUT][0]
 
     def get_n_inputs(self):
-        return len(self.get_in_connection().to_nodes)
+        return len(self.get_in_connections())
 
 
 class MetaNetworkManager(object):
@@ -70,29 +74,22 @@ class MetaNetworkManager(object):
     and at each sample it verifies this matches the output_type and input_type of the connected nodes.
     The layer of each meta-node is it's distance from the output node. The manager will also not generate a node that
     is further than max_layers from the output node.
-    If the "IN" gives a list of nodes, then a new connection can be created for either of them.
-    TODO: below are some issues that should be improved:
-    I am leaving a bit of a mess here. And without full functionality, each metanode can have multiple inputs but not
-    outputs. The type of inputs is defined per meta node and not per input to it - which is a bit limiting.
-    The fact that a connection can define several to_nodes is also a bit limiting - because it can't define which
-    names are relevant to which one. Maybe should have one connection defined for each input and output.
     """
+
     OUTPUT_NODE_NAME = "OUTPUT"
-    OUTPUT_NODE = MetaNode(OUTPUT_NODE_NAME, {'main_node': SubMetaNode(('OutputNode',))}, [Con(IN, ['main_node'])])
+    OUTPUT_NODE = MetaNode(OUTPUT_NODE_NAME, {"main_node": SubMetaNode(("OutputNode",))}, [Con(IN, "main_node")], input_type=InOutType.OUTPUT)
 
     def __init__(self, meta_nodes: List[MetaNode], max_layers: int = 3, n_additions: int = 5):
         self.network = nx.DiGraph()
-        self.meta_nodes = meta_nodes
+        self.meta_nodes_for_sample = {meta_node.name: meta_node for meta_node in meta_nodes}
         self.max_layers = max_layers
         self.n_additions = n_additions
         self.node_counts = defaultdict(int)  # node_name -> count of nodes of this type, so we can set unique names
-        self.meta_nodes_names = {**{meta_node.name: meta_node for meta_node in meta_nodes}, **{'OUTPUT': self.OUTPUT_NODE}}
-        self.nodes_by_input = defaultdict(list)
+        self.meta_nodes_names = {**self.meta_nodes_for_sample, **{"OUTPUT": self.OUTPUT_NODE}}
         self.nodes_by_output = defaultdict(list)
         for meta_node in meta_nodes:
-            self.nodes_by_input[meta_node.input_type].append(meta_node.name)
             self.nodes_by_output[meta_node.output_type].append(meta_node.name)
-        # make sure that the list contains inputs to fill each required input
+            # make sure that the list contains inputs to fill each required input
         for meta_node in meta_nodes:
             if meta_node.required_input_type not in [InOutType.ANY, InOutType.OUTPUT]:
                 assert (
@@ -102,7 +99,6 @@ class MetaNetworkManager(object):
     def generate_network(self):
         """
         Generate a network starting from the output node.
-        :param output_node_name: The name of the output node to start the generation from.
         """
         self.network.add_node(f"{self.OUTPUT_NODE_NAME}__1", layer=0, n_inputs=1)
 
@@ -121,24 +117,25 @@ class MetaNetworkManager(object):
                 break
             # Get a node to add inputs to
             node_to_add_inputs = np.random.choice(nodes_not_too_deep)
-            node_data = self.meta_nodes_names[node_to_add_inputs.split('__')[0]]  # remove the count from the name
+            node_data = self.meta_nodes_names[node_to_add_inputs.split("__")[0]]  # remove the count from the name
             required_input = node_data.required_input_type
             input_type = node_data.input_type
 
             # if the node has input requirements, filter the possible inputs
-            possible_inputs = list(self.meta_nodes_names)
+            possible_inputs = list(self.meta_nodes_for_sample)
             if required_input != InOutType.ANY:
                 possible_inputs = self.nodes_by_output[required_input]
             # filter the possible inputs by their required output type
             final_possibilities = []
             for possible_input in possible_inputs:
-                meta_node = self.meta_nodes_names[possible_input]
+                meta_node = self.meta_nodes_for_sample[possible_input]
                 # take only nodes that have the required output type, or those that don't care
-                if meta_node.required_output_type == input_type or meta_node.required_output_type == InOutType.ANY:
+                if meta_node.required_output_type in [input_type, InOutType.ANY]:
                     final_possibilities.append(possible_input)
-            node_to_add = self.meta_nodes_names[np.random.choice(final_possibilities)]
+            node_to_add = self.meta_nodes_for_sample[np.random.choice(final_possibilities)]
 
             new_layer = self.network.nodes[node_to_add_inputs]["layer"] + 1
+            # make sure each node has a unique name by giving it an index after the name "node__i"
             new_node_name = f"{node_to_add.name}__{self.node_counts[node_to_add.name]}"
             self.node_counts[node_to_add.name] += 1
             self.network.add_node(new_node_name, layer=new_layer, n_inputs=node_to_add.get_n_inputs())
@@ -147,65 +144,100 @@ class MetaNetworkManager(object):
     def meta_network_to_flat_network(self):
         """
         Convert the meta network to the regular network type.
-        Visiting every node in the network, we create the nodes in the structure and connect them.
-        Then randomize their parameters within the defined limitations.
+        Create a regular (non meta) node for every node that is in the meta structure, keeping track of their real names
+        (as opposed to the internal names used by the meta structure definition)
+        Then create all the edges between them - using a mapping between internal and real names.
+        Meanwhile, collect the connection data between IN and OUT connections
+        Finally make those connections between the meta nodes.
         """
         nm = NetworkManager()
         nm.initialize_network()
 
+        # create a node for every internal node of a meta structure, and collect connection names
         all_connections = {}
         for meta_node_name in self.network.nodes:
-            meta_node_data = self.meta_nodes_names[meta_node_name.split('__')[0]]
+            # get the meta node type (remove index)
+            meta_node_data = self.meta_nodes_names[meta_node_name.split("__")[0]]
             node_names_mapping = {}
+            # create nodes by the internal nodes and keep track of their real names and internal names
             for internal_name, sub_meta_node in meta_node_data.sub_meta_nodes.items():
                 possible_types_names = sub_meta_node.sample_group
+                # sample the actual node from the sample group
                 node_type_name = np.random.choice(possible_types_names)
-                node_name = nm.add_node_by_type_name(node_type_name)
+                if node_type_name == nm.OutputNodeNAME:  # output node is added in initialization
+                    node_name = nm.out_node_name
+                else:
+                    node_name = nm.add_node_by_type_name(node_type_name)
                 node_names_mapping[internal_name] = node_name
+                # if there are limitations on the distribution of params for the node - write them to the real node
+                if sub_meta_node.allowed_params is not None:
+                    nm.set_node_distribution_limitations(node_name, sub_meta_node.allowed_params)
             all_connections[meta_node_name] = (meta_node_data, node_names_mapping)
 
+        # Create all the connections between the nodes
+        meta_nodes_connections = defaultdict(lambda: defaultdict(list))
         for meta_node_name, (meta_node_data, node_names_mapping) in all_connections.items():
             for connection in meta_node_data.connections:
                 internal_name_from = connection.from_node
-                for i, internal_name_to in enumerate(connection.to_nodes):
-                    if internal_name_from == IN:
-                        continue # skip the input node, we will connect them using the output of the predecessor
-                    if internal_name_to == OUT:
-                        # TODO: consider there could be multiple inputs
-                        # TODO: I only need one - not in and out
-                        # TODO: from out, get the successor, then pick one of the "ins" it has and connect.
-                        # TODO: sample the right node - not using nm.free_inputs because it can have more then one
-                        # TODO: make sure I can limit which input to take for that node, or leave todo
-                        successor_meta_node = list(self.network.successors(meta_node_name))[0]
-                        successor_meta_node_data, successor_name_mapping = all_connections[successor_meta_node]
-                        successor_in_connection = successor_meta_node_data.get_in_connection()
-                        node_names = [successor_name_mapping[node_internal] for node_internal in successor_in_connection.to_nodes]
-                    # get the name from the internal MetaNode definition ("tex1") to the name in the network ("TexNoise_1")
-                    from_node = node_names_mapping[internal_name_from]
+                internal_name_to = connection.to_node
+                # if the connection is with another meta-node - just add it to the dict and we'll connect them later
+                if internal_name_from == IN:
                     to_node = node_names_mapping[internal_name_to]
+                    meta_nodes_connections[meta_node_name][IN].append((to_node, connection))
+                    continue
+                if internal_name_to == OUT:
+                    # take the name of the meta node the out is directed to and add the data to it
+                    successor_meta_node = list(self.network.successors(meta_node_name))[0]
+                    from_node = node_names_mapping[internal_name_from]
+                    meta_nodes_connections[successor_meta_node][OUT].append((from_node, connection))
+                    continue
 
-                    from_type = nm.node_name_to_node_type(from_node)
-                    if connection.out_names is not None:
-                        # if defined - get the specific output for this connection
-                        # e.g. the "X" output of the "SeparateXYZ" node
-                        from_output = connection.out_names[i]
-                    else:
-                        from_output = from_type.get_random_output()
+                from_node = node_names_mapping[internal_name_from]
+                to_node = node_names_mapping[internal_name_to]
+                to_input = self.choose_to_name(nm, connection, to_node)
+                from_output = self.choose_from_name(nm, connection, from_node)
+                nm.add_edge(from_node, to_node, from_output, to_input)
 
-                    if connection.in_names is not None:
-                        # if defined - select from the possible inputs, otherwise select from all free inputs
-                        to_possibilities = connection.in_names
-                    else:
-                        to_possibilities = list(nm.free_inputs[to_node])
-                    to_input = np.random.choice(to_possibilities)
-                    # not calculating the layers since the generation doesn't have to be from out to in, which will
-                    # mess up the layer calculation. It will be calculated at the end.
-                    nm.add_edge(from_node, to_node, from_output, to_input, calc_layer=False)
+        # after we collected the meta nodes connections, actually connect them
+        for meta_node_to, connections in meta_nodes_connections.items():
+            for out_connection in connections[OUT]:
+                from_node, from_connection = out_connection
+                in_connections = connections[IN]
+                # randomly pick one of the in connections and remove from list
+                to_node, to_connection = in_connections.pop(np.random.randint(len(in_connections)))
+                to_input = self.choose_to_name(nm, to_connection, to_node)
+                from_output = self.choose_from_name(nm, from_connection, from_node)
+                # not calculating the layers since the generation doesn't have to be from out to in, which will
+                # mess up the layer calculation. It will be calculated at the end.
+                nm.add_edge(from_node, to_node, from_output, to_input)
 
-        # TODO: calc layers
         nm.finish_network()
-        # TODO: add randomization and limitations of params
         return nm
+
+    @staticmethod
+    def choose_from_name(network_manager: NetworkManager, connection: Con, from_node: str):
+        """
+        Chooses the name of the output to take from the from_node, given options and limitations of the connection
+        """
+        from_type = network_manager.node_name_to_node_type(from_node)
+        from_options = list(from_type.get_outputs())
+        if connection.out_names is not None:
+            # if defined - choose randomly from the limited output names
+            from_options = [x for x in from_options if x in connection.out_names]
+        from_output = np.random.choice(from_options)
+        return from_output
+
+    @staticmethod
+    def choose_to_name(network_manager: NetworkManager, connection: Con, to_node: str):
+        """
+        Chooses the name of the input to the to_node, given what is free and the limitations of the connection
+        """
+        to_options = list(network_manager.free_inputs[to_node])
+        if connection.in_names is not None:
+            # if defined - select from the possible inputs, otherwise select from all free inputs
+            to_options = [x for x in to_options if x in connection.in_names]
+        to_input = np.random.choice(to_options)
+        return to_input
 
     def draw_network(self):
         """
@@ -224,77 +256,3 @@ class MetaNetworkManager(object):
             arrowsize=100,
         )
         plt.show()
-
-
-separated_textures = MetaNode(
-    "separated_textures",
-    {
-        "mix": SubMetaNode(mix_vector),
-        "tex1": SubMetaNode(textures),
-        "tex2": SubMetaNode(textures),
-        "mapping": SubMetaNode(mapping),
-    },
-    [
-        Con(IN, ["mapping"]),
-        Con("tex1", ["mix"]),
-        Con("tex2", ["mix"]),
-        Con("mapping", ["tex1", "tex2"]),
-        Con("mix", [OUT]),
-    ]
-)
-
-sep_math_add = MetaNode(
-    "sep_math_add",
-    {
-        "sep": SubMetaNode(sep),
-        "math1": SubMetaNode(math_float, {"operation": ["ABSOLUTE", "POWER"]}),
-        "math2": SubMetaNode(math_float, {"operation": ["ABSOLUTE", "POWER"]}),
-        "math3": SubMetaNode(math_float, {"operation": ["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"]}),
-    },
-    [
-        Con(IN, ["sep"]),
-        Con("math1", ["math3"]),
-        Con("math2",["math3"]),
-        Con("sep", ["math1", "math2"], out_names=["X", "Y"]),
-        Con("math3",[OUT]),
-    ],
-    required_input_type=InOutType.VECTOR,
-    output_type=InOutType.FLOAT,
-)
-
-
-burn_dodge = MetaNode(
-    "burn_dodge",
-    {
-        "burn": SubMetaNode(mix_vector, {"blend_type": ["Burn"], "B": (0, 0, 0)}),
-        "dodge": SubMetaNode(mix_vector, {"blend_type": ["Dodge"], "B": (1, 1, 1)}),
-    },
-
-    [Con(IN, ["burn"], in_names=["A"]), Con('burn', ["dodge"], in_names=["A"]), Con('dodge', [OUT])],
-    required_output_type=InOutType.OUTPUT,
-)
-
-combine_textures = MetaNode(
-    "combine_textures",
-    {
-        "tex_fac": SubMetaNode(textures),
-        "mix": SubMetaNode(mix_vector),
-        "ramp": SubMetaNode(ramp),
-        "tex1": SubMetaNode(textures),
-        "tex2": SubMetaNode(textures),
-    },
-    [
-        Con(IN, ["tex_fac", "tex1", "tex2"], in_names=[VECTOR]),
-        Con("mix", [OUT]),
-        Con("tex_fac", ["ramp"]),
-        Con("ramp", ["mix"]),
-        Con("tex1", ["mix"]),
-        Con("tex2", ["mix"]),
-    ],
-)
-
-if __name__ == "__main__":
-    meta_nodes = [separated_textures, sep_math_add, burn_dodge, combine_textures]
-    manager = MetaNetworkManager(meta_nodes, max_layers=3, n_additions=5)
-    manager.generate_network()
-    flat_network = manager.meta_network_to_flat_network()
