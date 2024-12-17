@@ -85,8 +85,8 @@ nodes_adder = NodesAdder(material.node_tree)
             node_distribution_limitations = self.network.nodes(self.node_value_ranges_name)[node_name]
             if node_distribution_limitations is not None:
                 for attr_name, new_dist in node_distribution_limitations.items():
-                    # set new distribution
-                    distributions[attr_name] = (new_dist, distributions[attr_name][1])
+                    if attr_name in distributions:
+                        distributions[attr_name] = (new_dist, distributions[attr_name][1])
 
     def get_random_param_values(self, param_type: ParamRequestType, with_limitations=True):
         """

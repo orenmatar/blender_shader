@@ -242,8 +242,8 @@ class Mapping(Node):
     NAME = "Mapping"
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, False),
-        NumericInput("Scale", (0, 10), (0, 0, 0), ParamType.VECTOR, False),
+        NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("Scale", (0, 10), (0, 0, 0), ParamType.VECTOR, True),
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
@@ -341,13 +341,13 @@ class MixVector(Node):
             if key == "Factor":
                 code += f'\n{self.node_name}.inputs["Factor"].default_value = {value}'
             else:
-                code += self.set_vector_code(self.node_name, f"'{key}'", value, filter_zeros=True)
+                code += self.set_vector_code(self.node_name, f"'{key}'", value, filter_zeros=False)
         return code
 
 
 class SeparateXYZ(Node):
     NAME = "SeparateXYZ"
-    NUMERIC = [NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR, True)]
+    NUMERIC = [NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True)]
     OUTPUTS = [
         Output("X", ParamType.FLOAT),
         Output("Y", ParamType.FLOAT),
@@ -359,7 +359,8 @@ class SeparateXYZ(Node):
 
     def to_code(self, func_name):
         code = f'\n{self.node_name} = {func_name}("ShaderNodeSeparateXYZ")'
-        code += self.set_vector_code(self.node_name, f"'Vector'", self.numeric["Vector"], filter_zeros=True)
+        # removed this - we are not using the params, it will always be connected
+        # code += self.set_vector_code(self.node_name, f"'Vector'", self.numeric["Vector"], filter_zeros=True)
         return code
 
 
@@ -386,7 +387,7 @@ class TexGabor(Node):
     NAME = "TexGabor"
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, False),
         NumericInput("Frequency", (0, 10), 2, ParamType.FLOAT, False),
     ]
     OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
@@ -429,7 +430,7 @@ class TexNoise(Node):
     NAME = "TexNoise"
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, False),
         NumericInput("Lacunarity", (0, 10), 2, ParamType.FLOAT, False),
         NumericInput("Distortion", (0, 5), 0, ParamType.FLOAT, False),
     ]
@@ -452,7 +453,7 @@ class TexVoronoiF(Node):
     NAME = "TexVoronoiF"
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, True),
         NumericInput("Randomness", (0, 1), 1, ParamType.FLOAT, False),
     ]
     CATEGORICAL = [Param("distance", ("EUCLIDEAN", "CHEBYCHEV"), "EUCLIDEAN", ParamType.CATEGORICAL)]
@@ -478,7 +479,7 @@ class TexWave(Node):
     NAME = "TexWave"
     NUMERIC = [
         NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 20), 5, ParamType.FLOAT, False),
+        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, False),
         NumericInput("Distortion", (0, 5), 0, ParamType.FLOAT, False),
     ]
     CATEGORICAL = [Param("wave_profile", ("SIN", "SAW"), "SIN", ParamType.CATEGORICAL)]
@@ -539,8 +540,8 @@ class Value(Node):
 class VectorMath(Node):
     NAME = "VectorMath"
     NUMERIC = [
-        NumericInput("vector_0", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
-        NumericInput("vector_1", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("vector_0", (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("vector_1", (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
     ]
     CATEGORICAL = [
         Param(
@@ -570,10 +571,11 @@ class VectorMath(Node):
     def to_code(self, func_name):
         string_params = _dict_to_string_params(self.categorical)
         code = f'\n{self.node_name} = {func_name}("ShaderNodeVectorMath", {string_params})'
-        for key, value in self.numeric.items():
-            if value != 0:
-                in_name = self.INPUT_MAPPING[key]
-                code += self.set_vector_code(self.node_name, in_name, value, filter_zeros=True)
+        # removed this part since we're only using vector math as vector input - it has no params
+        # for key, value in self.numeric.items():
+        #     if value != 0:
+        #         in_name = self.INPUT_MAPPING[key]
+        #         code += self.set_vector_code(self.node_name, in_name, value, filter_zeros=True)
         return code
 
 

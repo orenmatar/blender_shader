@@ -11,23 +11,28 @@ from enum import Enum
 
 IN = "IN"
 OUT = "OUT"
-textures = ("TexNoise", "TexWave", "TexGabor", "TexGradient", "TexVoronoiF")
-mix_vector = ("MixVector",)
-mapping = ("Mapping",)
-sep = ("SeparateXYZ",)
-math_float = ("Math",)
-vector_math = ("VectorMath",)
-either_math = ("Math", "VectorMath")
-ramp = ("ValToRGB",)
-combine = ("CombineXYZ",)
-value = ("Value",)
+
+NODE_LIST_textures = ("TexNoise", "TexWave", "TexGabor", "TexGradient", "TexVoronoiF")
+NODE_LIST_voronoi = ("TexVoronoiF",)
+NODE_LIST_gradient = ("TexGradient",)
+NODE_LIST_mix_vector = ("MixVector",)
+NODE_LIST_mapping = ("Mapping",)
+NODE_LIST_sep = ("SeparateXYZ",)
+NODE_LIST_math_float = ("Math",)
+NODE_LIST_vector_math = ("VectorMath",)
+NODE_LIST_either_math = ("Math", "VectorMath")
+NODE_LIST_ramp = ("ValToRGB",)
+NODE_LIST_combine = ("CombineXYZ",)
+NODE_LIST_value = ("Value",)
 
 
 class InOutType(Enum):
-    VECTOR = 1
+    VECTOR_OR_COLOR = 1
     FLOAT = 2
     ANY = 3
     OUTPUT = 4
+    VECTOR = 5
+    COLOR = 6
 
 
 @dataclass
@@ -51,8 +56,8 @@ class MetaNode(object):
     name: str
     sub_meta_nodes: Dict[str, SubMetaNode]
     connections: List[Con]
-    output_type: InOutType = InOutType.VECTOR
-    input_type: InOutType = InOutType.VECTOR
+    output_type: InOutType = InOutType.VECTOR_OR_COLOR
+    input_type: InOutType = InOutType.VECTOR_OR_COLOR
     required_output_type: InOutType = InOutType.ANY
     required_input_type: InOutType = InOutType.ANY
 
@@ -66,6 +71,24 @@ class MetaNode(object):
         return len(self.get_in_connections())
 
 
+def in_out_types_to_list_of_allowed(in_out_types: InOutType):
+    """
+    Convert the InOutType to a list of allowed types
+    """
+    if in_out_types == InOutType.VECTOR_OR_COLOR:
+        return {InOutType.VECTOR, InOutType.COLOR, InOutType.VECTOR_OR_COLOR}
+    if in_out_types == InOutType.ANY:
+        return {
+            InOutType.VECTOR,
+            InOutType.COLOR,
+            InOutType.FLOAT,
+            InOutType.OUTPUT,
+            InOutType.VECTOR_OR_COLOR,
+            InOutType.ANY,
+        }
+    return {in_out_types}
+
+
 class MetaNetworkManager(object):
     """
     The manager of the meta network takes a list of possible meta nodes and creates a network of them.
@@ -77,7 +100,12 @@ class MetaNetworkManager(object):
     """
 
     OUTPUT_NODE_NAME = "OUTPUT"
-    OUTPUT_NODE = MetaNode(OUTPUT_NODE_NAME, {"main_node": SubMetaNode(("OutputNode",))}, [Con(IN, "main_node")], input_type=InOutType.OUTPUT)
+    OUTPUT_NODE = MetaNode(
+        OUTPUT_NODE_NAME,
+        {"main_node": SubMetaNode(("OutputNode",))},
+        [Con(IN, "main_node")],
+        input_type=InOutType.OUTPUT,
+    )
 
     def __init__(self, meta_nodes: List[MetaNode], max_layers: int = 3, n_additions: int = 5):
         self.network = nx.DiGraph()
@@ -86,15 +114,9 @@ class MetaNetworkManager(object):
         self.n_additions = n_additions
         self.node_counts = defaultdict(int)  # node_name -> count of nodes of this type, so we can set unique names
         self.meta_nodes_names = {**self.meta_nodes_for_sample, **{"OUTPUT": self.OUTPUT_NODE}}
-        self.nodes_by_output = defaultdict(list)
+        self.nodes_by_output = defaultdict(set)
         for meta_node in meta_nodes:
-            self.nodes_by_output[meta_node.output_type].append(meta_node.name)
-            # make sure that the list contains inputs to fill each required input
-        for meta_node in meta_nodes:
-            if meta_node.required_input_type not in [InOutType.ANY, InOutType.OUTPUT]:
-                assert (
-                    len(self.nodes_by_output[meta_node.required_input_type]) > 0
-                ), f"Node {meta_node.name} has no input nodes of type {meta_node.required_input_type}"
+            self.nodes_by_output[meta_node.output_type].add(meta_node.name)
 
     def generate_network(self):
         """
@@ -122,15 +144,16 @@ class MetaNetworkManager(object):
             input_type = node_data.input_type
 
             # if the node has input requirements, filter the possible inputs
-            possible_inputs = list(self.meta_nodes_for_sample)
-            if required_input != InOutType.ANY:
-                possible_inputs = self.nodes_by_output[required_input]
+            allowed_input_types = in_out_types_to_list_of_allowed(required_input)
+            possible_inputs = set.union(*[self.nodes_by_output[allowed_input] for allowed_input in allowed_input_types])
             # filter the possible inputs by their required output type
+            input_types = in_out_types_to_list_of_allowed(input_type)
             final_possibilities = []
             for possible_input in possible_inputs:
                 meta_node = self.meta_nodes_for_sample[possible_input]
-                # take only nodes that have the required output type, or those that don't care
-                if meta_node.required_output_type in [input_type, InOutType.ANY]:
+                # take only nodes that have the required output type
+                output_types_allowed = in_out_types_to_list_of_allowed(meta_node.required_output_type) | {InOutType.ANY}
+                if any(input_type in output_types_allowed for input_type in input_types):
                     final_possibilities.append(possible_input)
             node_to_add = self.meta_nodes_for_sample[np.random.choice(final_possibilities)]
 
