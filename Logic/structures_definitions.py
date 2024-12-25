@@ -230,7 +230,7 @@ mega_structure1 = MetaNode(
         'value1': SubMetaNode(NODE_LIST_value),
         'value2': SubMetaNode(NODE_LIST_value, allowed_params={"Value": (-1, 0)}),
         'ramp': SubMetaNode(NODE_LIST_ramp),
-        "math": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("MULTIPLY",)}),
+        "math": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("MULTIPLY", "ADD")}),
         "vec_math1": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("MULTIPLY",)}),
         "vec_math2": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("FRACTION",)}),
         "vec_math3": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("ADD",)}),

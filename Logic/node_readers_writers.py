@@ -29,6 +29,7 @@ class ParamRequestType(Enum):
     SEED = 3
     ALL = 4
     NON_VECTOR_INPUT = 5
+    NON_SEED = 6
 
 
 @dataclass
@@ -151,6 +152,8 @@ class Node(object):
             relevant_dict = cls.CATEGORICAL
         elif param_type == ParamRequestType.ALL:
             relevant_dict = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
+        elif param_type == ParamRequestType.NON_SEED:
+            relevant_dict = {**cls.NUMERIC, **cls.CATEGORICAL}
         elif param_type == ParamRequestType.NON_VECTOR_INPUT:
             all_params = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
             relevant_dict = {
@@ -181,6 +184,13 @@ class Node(object):
         Get the possible numeric inputs of the node type.
         """
         return {key: val for key, val in cls.NUMERIC.items() if val.as_input}
+
+    @classmethod
+    def get_inputs_names_list(cls) -> List:
+        """
+        Used if we need to make sure the order is constant
+        """
+        return [input_name for input_name, val in cls.NUMERIC.items() if val.as_input]
 
     @classmethod
     def get_random_input(cls) -> str:

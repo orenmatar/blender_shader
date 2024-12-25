@@ -163,7 +163,7 @@ nodes_adder = NodesAdder(material.node_tree)
             assert self.node_counts[node_type_name] == 0, "Only one input and output node allowed"
         self.node_counts[node_type_name] += 1
         node_name = node_type_name + f"_{self.node_counts[node_type_name]}"
-        node_type: Node = self.NODE_TYPES[node_type_name]
+        node_type = self.NODE_TYPES[node_type_name]
         properties = node_type.get_node_type_params(ParamRequestType.ALL, default_values=True)
         self._add_node(node_type, node_name, properties)
         return node_name
@@ -174,6 +174,16 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         in_edges = self.network.in_edges(node, data=True)
         return [edge_properties["in"] for previous_node, self_node, edge_properties in in_edges]
+
+    def get_nodes_properties(self, nodes_properties: list):
+        """
+        Get the properties of the nodes in the network
+        """
+        nodes = self.network.nodes(data=True)
+        res = defaultdict(dict)
+        for node, prop in nodes_properties:
+            res[node][prop] = nodes[node][prop]
+        return res
 
     def get_all_nodes_values(self, param_type: ParamRequestType, return_ranges=False, not_input_values=True):
         """
@@ -221,20 +231,29 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         Adds a note to the network, and keeps track of its inputs
         """
+        assert node_name not in self.network.nodes, "Node name must be unique"
         self.network.add_node(node_name, **properties)
         free_inputs = node_type.get_node_type_free_inputs()
         self.free_inputs[node_name] = free_inputs
 
     def remove_node(self, node1):
-        # TODO: make sure to remove inputs from free input dict, must_connect_to_inputs...
-        raise NotImplementedError
+        # first remove all edges
+        incoming_edges = self.network.in_edges(node1, data=True)
+        outgoing_edges = self.network.out_edges(node1, data=True)
+        all_edges = list(incoming_edges) + list(outgoing_edges)
+        for edge in all_edges:
+            self.remove_edge(edge[0], edge[1], edge[2]['in'])
+        # remove from free inputs, and remove node
+        if node1 in self.free_inputs:
+            del self.free_inputs[node1]
+        self.network.remove_node(node1)
 
     def add_edge(self, node1, node2, out1, in2):
         assert in2 in self.free_inputs[node2], "Input must be free"
         self.network.add_edge(node1, node2, **{"out": out1, "in": in2}, key=in2)
         self.free_inputs[node2].remove(in2)
 
-    def _remove_edge(self, node1, node2, in2):
+    def remove_edge(self, node1, node2, in2):
         self.network.remove_edge(node1, node2, key=in2)
         self.free_inputs[node2].add(in2)
 
