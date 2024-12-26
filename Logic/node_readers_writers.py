@@ -556,15 +556,7 @@ class VectorMath(Node):
     CATEGORICAL = [
         Param(
             "operation",
-            (
-                "ADD",
-                "SUBTRACT",
-                "MULTIPLY",
-                "DIVIDE",
-                "CROSS_PRODUCT",
-                "ABSOLUTE",
-                "FRACTION"
-            ),
+            ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "CROSS_PRODUCT", "ABSOLUTE", "FRACTION"),
             "ADD",
             ParamType.CATEGORICAL,
         )

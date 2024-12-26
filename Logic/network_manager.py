@@ -10,9 +10,11 @@ import matplotlib.pyplot as plt
 def sample_uniform(low=0, high=10, size=1):
     return np.random.uniform(low=low, high=high, size=size)
 
+
 def sample_log_scale(low=0, high=10, power=3, size=1):
     x = np.random.uniform(0, 1, size=size)
-    return low + (high - low) * (x ** power)
+    return low + (high - low) * (x**power)
+
 
 class NetworkManager(object):
     """
@@ -68,6 +70,41 @@ nodes_adder = NodesAdder(material.node_tree)
         self.in_node_name, self.out_node_name = "InputNode_1", "OutputNode_1"
         self.node_value_ranges_name = "node_value_ranges"
 
+    def copy(self):
+        """
+        Copy the network manager
+        """
+        new_manager = NetworkManager()
+        new_manager.network = self.network.copy()
+        new_manager.node_counts = self.node_counts.copy()
+        new_manager.free_inputs = self.free_inputs.copy()
+        new_manager.in_node_name = self.in_node_name
+        new_manager.out_node_name = self.out_node_name
+        new_manager.node_value_ranges_name = self.node_value_ranges_name
+        return new_manager
+
+    def network_data_for_comparison(self):
+        """
+        Get the network data for comparison - only the important properties, sorted so it is easy to compare
+        :return:
+        """
+        all_nodes = dict(self.network.nodes(data=True))
+        for node_name, node_props in all_nodes.items():
+            if "layer" in node_props:
+                del node_props["layer"]
+            if self.node_value_ranges_name in node_props:
+                del node_props[self.node_value_ranges_name]
+        all_edges = sorted([(node1, node2, frozenset(data)) for node1, node2, data in self.network.edges(data=True)])
+        return all_nodes, all_edges
+
+    @staticmethod
+    def compare_networks(nodes1, edges1, nodes2, edges2, compare_node_properties=True):
+        if compare_node_properties:
+            return nodes1 == nodes2 and edges1 == edges2
+        node_types1 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes1}
+        node_types2 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes2}
+        return node_types1 == node_types2 and edges1 == edges2
+
     def initialize_network(self):
         """
         Initialize the network with input and output nodes
@@ -104,6 +141,16 @@ nodes_adder = NodesAdder(material.node_tree)
         for node, attributes in update_attributes.items():
             for attr_name, value in attributes.items():
                 self.network.nodes[node][attr_name] = value
+
+    def get_node_non_default_vals(self, node_name):
+        """
+        Get the param values only if they are not the default values of that node type, for a specific node
+        """
+        node_instance = self.to_node_instance(node_name)
+        default_vals = node_instance.get_node_type_params(ParamRequestType.ALL, default_values=True)
+        current_cals = node_instance.numeric | node_instance.categorical | node_instance.seeds
+        non_default_vals = {k: v for k, v in current_cals.items() if v != default_vals[k]}
+        return non_default_vals
 
     def generate_random_network(self, n_additions=5):
         """
@@ -159,10 +206,17 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         Add a node of a specific type to the network. Node name is unique - by the count of that type
         """
+        node_name = node_type_name + f"_{self.node_counts[node_type_name]+1}"
+        self.add_node_by_type_and_name(node_type_name, node_name)
+        return node_name
+
+    def add_node_by_type_and_name(self, node_type_name, node_name):
+        """
+        Add a node of a specific type to the network. Node name is unique - by the count of that type
+        """
         if node_type_name in {self.OutputNodeNAME, self.InputNodeNAME}:
             assert self.node_counts[node_type_name] == 0, "Only one input and output node allowed"
         self.node_counts[node_type_name] += 1
-        node_name = node_type_name + f"_{self.node_counts[node_type_name]}"
         node_type = self.NODE_TYPES[node_type_name]
         properties = node_type.get_node_type_params(ParamRequestType.ALL, default_values=True)
         self._add_node(node_type, node_name, properties)
@@ -242,7 +296,7 @@ nodes_adder = NodesAdder(material.node_tree)
         outgoing_edges = self.network.out_edges(node1, data=True)
         all_edges = list(incoming_edges) + list(outgoing_edges)
         for edge in all_edges:
-            self.remove_edge(edge[0], edge[1], edge[2]['in'])
+            self.remove_edge(edge[0], edge[1], edge[2]["in"])
         # remove from free inputs, and remove node
         if node1 in self.free_inputs:
             del self.free_inputs[node1]

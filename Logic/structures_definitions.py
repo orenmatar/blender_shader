@@ -25,7 +25,9 @@ math_on_x_y_separately = MetaNode(
         "sep": SubMetaNode(NODE_LIST_sep),
         "math1": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("ABSOLUTE", "POWER")}),
         "math2": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("ABSOLUTE", "POWER")}),
-        "math3": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE")}),
+        "math3": SubMetaNode(
+            NODE_LIST_math_float, allowed_params={"operation": ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE")}
+        ),
     },
     [
         Con(IN, "sep"),
@@ -46,7 +48,9 @@ tex_on_x_y_separately_then_math = MetaNode(
         "sep": SubMetaNode(NODE_LIST_sep),
         "tex1": SubMetaNode(NODE_LIST_textures),
         "tex2": SubMetaNode(NODE_LIST_textures),
-        "math1": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE")}),
+        "math1": SubMetaNode(
+            NODE_LIST_math_float, allowed_params={"operation": ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE")}
+        ),
     },
     [
         Con(IN, "sep"),
@@ -147,8 +151,8 @@ texture_and_mix_with_self = MetaNode(
     [
         Con(IN, "mapping", in_names=[VECTOR]),
         Con("mapping", "tex1"),
-        Con("mapping", "mix", in_names=['A']),
-        Con("tex1", "mix", in_names=['B']),
+        Con("mapping", "mix", in_names=["A"]),
+        Con("tex1", "mix", in_names=["B"]),
         Con("mix", OUT),
     ],
     output_type=InOutType.COLOR,
@@ -187,7 +191,11 @@ texture_ramp = MetaNode(
 
 texture_on_mapping = MetaNode(
     "texture_on_mapping",
-    {"mapping": SubMetaNode(NODE_LIST_mapping), "tex1": SubMetaNode(NODE_LIST_textures), "math1": SubMetaNode(NODE_LIST_either_math)},
+    {
+        "mapping": SubMetaNode(NODE_LIST_mapping),
+        "tex1": SubMetaNode(NODE_LIST_textures),
+        "math1": SubMetaNode(NODE_LIST_either_math),
+    },
     [
         Con(IN, "tex1"),
         Con(IN, "mapping", in_names=[VECTOR]),
@@ -210,8 +218,8 @@ tex_on_frac_on_scale = MetaNode(
     },
     [
         Con(IN, "vec_math2"),
-        Con('value', "vec_math2"),  # value used to set all xyz to the same value
-        Con("vec_math2", "vec_math1", in_names=['vector_0']),
+        Con("value", "vec_math2"),  # value used to set all xyz to the same value
+        Con("vec_math2", "vec_math1", in_names=["vector_0"]),
         Con("vec_math1", "tex1"),
         Con("tex1", OUT),
     ],
@@ -227,9 +235,9 @@ mega_structure1 = MetaNode(
         "tex0": SubMetaNode(NODE_LIST_gradient),
         "tex1": SubMetaNode(NODE_LIST_voronoi),
         "tex2": SubMetaNode(NODE_LIST_gradient),
-        'value1': SubMetaNode(NODE_LIST_value),
-        'value2': SubMetaNode(NODE_LIST_value, allowed_params={"Value": (-1, 0)}),
-        'ramp': SubMetaNode(NODE_LIST_ramp),
+        "value1": SubMetaNode(NODE_LIST_value),
+        "value2": SubMetaNode(NODE_LIST_value, allowed_params={"Value": (-1, 0)}),
+        "ramp": SubMetaNode(NODE_LIST_ramp),
         "math": SubMetaNode(NODE_LIST_math_float, allowed_params={"operation": ("MULTIPLY", "ADD")}),
         "vec_math1": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("MULTIPLY",)}),
         "vec_math2": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("FRACTION",)}),
@@ -237,8 +245,8 @@ mega_structure1 = MetaNode(
     },
     [
         Con(IN, "mapping", in_names=[VECTOR]),
-        Con('mapping', "tex0"),
-        Con("tex0", "vec_math1", in_names=['vector_0']),
+        Con("mapping", "tex0"),
+        Con("tex0", "vec_math1", in_names=["vector_0"]),
         Con("vec_math1", "vec_math2"),
         Con("vec_math2", "vec_math3"),
         Con("vec_math3", "tex2"),
@@ -246,7 +254,7 @@ mega_structure1 = MetaNode(
         Con("value2", "vec_math3"),
         Con("tex2", "ramp"),
         Con("ramp", "math"),
-        Con("math", "tex1", in_names=['Scale']),
+        Con("math", "tex1", in_names=["Scale"]),
         Con("tex1", OUT),
     ],
     output_type=InOutType.COLOR,
@@ -261,29 +269,29 @@ mega_structure2 = MetaNode(
         "tex0": SubMetaNode(NODE_LIST_textures),
         "mix1": SubMetaNode(NODE_LIST_mix_vector),
         "mix2": SubMetaNode(NODE_LIST_mix_vector, allowed_params={"blend_type": ("SUBTRACT",), "B": (1, 1)}),
-        'math1': SubMetaNode(NODE_LIST_math_float, allowed_params={'value_0': (0, 1), 'operation': ('SUBTRACT',)}),
-        'value1': SubMetaNode(NODE_LIST_value, allowed_params={"Value": (0,1)}),
-        'gradient1': SubMetaNode(NODE_LIST_gradient),
-        'gradient2': SubMetaNode(NODE_LIST_gradient),
+        "math1": SubMetaNode(NODE_LIST_math_float, allowed_params={"value_0": (0, 1), "operation": ("SUBTRACT",)}),
+        "value1": SubMetaNode(NODE_LIST_value, allowed_params={"Value": (0, 1)}),
+        "gradient1": SubMetaNode(NODE_LIST_gradient),
+        "gradient2": SubMetaNode(NODE_LIST_gradient),
         "tex1": SubMetaNode(NODE_LIST_textures),
         "tex2": SubMetaNode(NODE_LIST_textures),
         "mix3": SubMetaNode(NODE_LIST_mix_vector),
     },
     [
         Con(IN, "mapping", in_names=[VECTOR]),
-        Con('mapping', "tex0"),
-        Con("mapping", "mix1", in_names=['A', 'B']),
-        Con("tex0", "mix1", in_names=['A', 'B']),
-        Con("mix1", "mix2", in_names=['A']),
-        Con("value1", "mix1", in_names=['Factor']),
-        Con("value1", "math1", in_names=['value_1']),
-        Con("math1", "mix2", in_names=['Factor']),
+        Con("mapping", "tex0"),
+        Con("mapping", "mix1", in_names=["A", "B"]),
+        Con("tex0", "mix1", in_names=["A", "B"]),
+        Con("mix1", "mix2", in_names=["A"]),
+        Con("value1", "mix1", in_names=["Factor"]),
+        Con("value1", "math1", in_names=["value_1"]),
+        Con("math1", "mix2", in_names=["Factor"]),
         Con("mix2", "gradient1"),
         Con("mix2", "gradient2"),
         Con("gradient1", "tex1"),
         Con("gradient2", "tex2"),
-        Con("tex1", "mix3", in_names=['A']),
-        Con("tex2", "mix3", in_names=['B']),
+        Con("tex1", "mix3", in_names=["A"]),
+        Con("tex2", "mix3", in_names=["B"]),
         Con("mix3", OUT),
     ],
     output_type=InOutType.COLOR,
@@ -307,10 +315,7 @@ ALL_META_NODES = [
     tex_on_frac_on_scale,
 ]
 
-MEGA_STRUCTURES = [
-mega_structure1,
-mega_structure2
-]
+MEGA_STRUCTURES = [mega_structure1, mega_structure2]
 
 if __name__ == "__main__":
     meta_nodes = [mega_structure2, burn_dodge]
