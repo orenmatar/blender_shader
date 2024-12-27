@@ -89,16 +89,25 @@ nodes_adder = NodesAdder(material.node_tree)
         :return:
         """
         all_nodes = dict(self.network.nodes(data=True))
+        # make a dict of nodes and their attributes, excluding the layer and value ranges which are not important
         for node_name, node_props in all_nodes.items():
             if "layer" in node_props:
                 del node_props["layer"]
             if self.node_value_ranges_name in node_props:
                 del node_props[self.node_value_ranges_name]
+        # make a sorted list of edges, so it is easy to compare, with the dict of attributes as a frozenset
         all_edges = sorted([(node1, node2, frozenset(data)) for node1, node2, data in self.network.edges(data=True)])
         return all_nodes, all_edges
 
     @staticmethod
-    def compare_networks(nodes1, edges1, nodes2, edges2, compare_node_properties=True):
+    def compare_networks(network1, network2, compare_node_properties=True):
+        """
+        Compare two networks, given their nodes and edges
+        If compare_node_properties is False, only compare the node types, not the attribute values (i.e., doesn't matter
+        if scale or some param is different)
+        """
+        nodes1, edges1 = network1.network_data_for_comparison()
+        nodes2, edges2 = network2.network_data_for_comparison()
         if compare_node_properties:
             return nodes1 == nodes2 and edges1 == edges2
         node_types1 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes1}
@@ -319,8 +328,9 @@ nodes_adder = NodesAdder(material.node_tree)
         lengths = nx.shortest_path_length(self.network.reverse(copy=False), self.out_node_name)
         for node, length in lengths.items():
             self.network.nodes[node]["layer"] = length + 1
-        if self.in_node_name not in lengths:  # in case it wasn't connected
-            self.network.nodes[self.in_node_name]["layer"] = 15
+        for node in self.network.nodes:
+            if node not in lengths:   # in case it wasn't connected
+                self.network.nodes[node]["layer"] = 15
 
     def to_node_instance(self, node_name: str) -> Node:
         """
