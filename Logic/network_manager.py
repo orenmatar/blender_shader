@@ -1,3 +1,5 @@
+import copy
+import json
 from collections import defaultdict
 from typing import Tuple
 
@@ -6,14 +8,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-
-def sample_uniform(low=0, high=10, size=1):
-    return np.random.uniform(low=low, high=high, size=size)
-
-
-def sample_log_scale(low=0, high=10, power=3, size=1):
-    x = np.random.uniform(0, 1, size=size)
-    return low + (high - low) * (x**power)
+from Logic.utils import sample_uniform
 
 
 class NetworkManager(object):
@@ -46,12 +41,13 @@ class NetworkManager(object):
 import sys
 sys.path.append('/Users/orenm/BlenderShaderProject/project_files/')
 
-from Logic.bpy_connector import clean_scene, set_for_texture_generation, settings_for_texture_generation, NodesAdder
+from Logic.bpy_connector import set_file_path, clean_scene, set_for_texture_generation, settings_for_texture_generation, NodesAdder
 
 path = '/Users/orenm/Desktop/test.png'
 clean_scene()
 set_for_texture_generation()
-settings_for_texture_generation(path = path, resolution=512)
+settings_for_texture_generation(resolution=512)
+set_file_path(path)
 
 material = bpy.data.materials.new(name='my_material')
 material.use_nodes = True
@@ -67,6 +63,7 @@ nodes_adder = NodesAdder(material.node_tree)
         self.network = nx.MultiDiGraph()
         self.node_counts = defaultdict(int)  # node_name -> count of nodes of this type, so we can set unique names
         self.free_inputs = {}  # node_name -> set of free inputs we can connect to at the moment
+        # TODO: these should probably just be constants
         self.in_node_name, self.out_node_name = "InputNode_1", "OutputNode_1"
         self.node_value_ranges_name = "node_value_ranges"
 
@@ -76,19 +73,68 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         new_manager = NetworkManager()
         new_manager.network = self.network.copy()
-        new_manager.node_counts = self.node_counts.copy()
-        new_manager.free_inputs = self.free_inputs.copy()
+        new_manager.node_counts = copy.deepcopy(self.node_counts)
+        new_manager.free_inputs = copy.deepcopy(self.free_inputs)
         new_manager.in_node_name = self.in_node_name
         new_manager.out_node_name = self.out_node_name
         new_manager.node_value_ranges_name = self.node_value_ranges_name
         return new_manager
+
+    def to_dict(self):
+        """
+        Convert the network to a dict
+        """
+        network_data = nx.node_link_data(self.network, edges="edges")
+        # convert the free inputs to a list, so it can be saved to json
+        free_inputs_as_list = {key: list(value) for key, value in self.free_inputs.items()}
+        manager_data = {
+            "node_counts": self.node_counts,
+            "free_inputs": free_inputs_as_list,
+            "in_node_name": self.in_node_name,
+            "out_node_name": self.out_node_name,
+            "node_value_ranges_name": self.node_value_ranges_name,
+            "network_data": network_data,
+        }
+        return manager_data
+
+    def dump_to_json(self, filename):
+        """
+        Dump the network to a json file
+        """
+        as_dict = self.to_dict()
+        with open(filename, "w") as f:
+            json.dump(as_dict, f)
+
+    @staticmethod
+    def from_dict(manager_data):
+        """
+        Create a network manager from a dict
+        """
+        new_manager = NetworkManager()
+        new_manager.node_counts = manager_data["node_counts"]
+        new_manager.free_inputs = manager_data["free_inputs"]
+        new_manager.in_node_name = manager_data["in_node_name"]
+        new_manager.out_node_name = manager_data["out_node_name"]
+        new_manager.node_value_ranges_name = manager_data["node_value_ranges_name"]
+        network = nx.node_link_graph(manager_data["network_data"], edges="edges")
+        new_manager.network = network
+        return new_manager
+
+    @staticmethod
+    def load_from_json(filename):
+        """
+        Load the network from a json file
+        """
+        with open(filename, "r") as f:
+            manager_data = json.load(f)
+        return NetworkManager.from_dict(manager_data)
 
     def network_data_for_comparison(self):
         """
         Get the network data for comparison - only the important properties, sorted so it is easy to compare
         :return:
         """
-        all_nodes = dict(self.network.nodes(data=True))
+        all_nodes = copy.deepcopy(dict(self.network.nodes(data=True)))
         # make a dict of nodes and their attributes, excluding the layer and value ranges which are not important
         for node_name, node_props in all_nodes.items():
             if "layer" in node_props:
@@ -113,6 +159,9 @@ nodes_adder = NodesAdder(material.node_tree)
         node_types1 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes1}
         node_types2 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes2}
         return node_types1 == node_types2 and edges1 == edges2
+
+    def __eq__(self, other):
+        return self.compare_networks(self, other)
 
     def initialize_network(self):
         """
@@ -281,7 +330,7 @@ nodes_adder = NodesAdder(material.node_tree)
                 if attr_type in [ParamType.FLOAT, ParamType.SEED]:
                     value = float(sample_uniform(low=dist[0], high=dist[1], size=1).round(1)[0])
                 elif attr_type == ParamType.VECTOR:
-                    value = tuple(sample_uniform(low=dist[0], high=dist[1], size=3).round(1))
+                    value = list(sample_uniform(low=dist[0], high=dist[1], size=3).round(1))
                 elif attr_type == ParamType.CATEGORICAL:
                     value = np.random.choice(dist)
                 else:
@@ -329,7 +378,7 @@ nodes_adder = NodesAdder(material.node_tree)
         for node, length in lengths.items():
             self.network.nodes[node]["layer"] = length + 1
         for node in self.network.nodes:
-            if node not in lengths:   # in case it wasn't connected
+            if node not in lengths:  # in case it wasn't connected
                 self.network.nodes[node]["layer"] = 15
 
     def to_node_instance(self, node_name: str) -> Node:
@@ -386,6 +435,22 @@ nodes_adder = NodesAdder(material.node_tree)
         )
         nx.draw_networkx_edge_labels(self.network, pos, edge_labels=edge_labels, font_color="red")
         plt.show()
+
+    def calculate_true_free_inputs(self):
+        """
+        Calculate the true free inputs of the network, given the current connections
+        Useful for debugging and checking the network, if the free inputs are incorrect
+        """
+        true_free_inputs = {}
+        for node in self.network.nodes():
+            node_type = self.node_name_to_node_type(node)
+            true_free_inputs[node] = node_type.get_node_type_free_inputs()
+
+        for edge in self.network.edges(data=True):
+            in_node = edge[1]
+            in_name = edge[2]["in"]
+            true_free_inputs[in_node].remove(in_name)
+        return true_free_inputs
 
     def generate_code(self, with_initialization_code=False):
         """

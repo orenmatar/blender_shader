@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List
+from typing import List, Optional
 from uuid import uuid4
 
 import networkx as nx
@@ -70,6 +70,7 @@ This means we can save the instructions on a super-network (where each node repr
 edges are the operations we need to take between the networks to get from one to the other - they are the variations' steps.
 """
 
+
 def param_request_type_to_variation_type(param_request_type: ParamRequestType) -> VariationType:
     """
     Convert the ParamRequestType to the VariationType
@@ -105,7 +106,7 @@ def non_structural_changes(
     for node_name, param_name in change_options:
         vals, param_type = dist_vals[node_name][param_name]
         if param_type == ParamType.CATEGORICAL:
-            new_vals = tuple([v for v in vals if v != old_vals[node_name][param_name]])
+            new_vals = [v for v in vals if v != old_vals[node_name][param_name]]
         else:
             new_vals = vals
         if len(new_vals) > 0:
@@ -151,7 +152,7 @@ def add_random_node_on_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
     node_type = nm.NODE_TYPES[new_node_type_name]
     new_node_out = node_type.get_random_output()
     new_node_in = node_type.get_random_input()
-    new_node_name = new_node_type_name + f"_{str(uuid4())}" # create a unique name for the new node
+    new_node_name = new_node_type_name + f"_{str(uuid4())}"  # create a unique name for the new node
 
     step = {
         "edge": edge,
@@ -170,7 +171,7 @@ def add_random_node_on_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
     return TwoWayVariationDescriptor([forward], [backward])
 
 
-def add_random_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
+def add_random_edge(nm: NetworkManager) -> Optional[TwoWayVariationDescriptor]:
     """
     Add a random edge to the network.
     The edge can be between any two nodes, even if they are connected (so it will do nothing)
@@ -200,6 +201,18 @@ def add_random_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
     if len(connected_edge) > 0:
         assert len(connected_edge) == 1, "This really should not happen"  # can only be 0 or 1
         connected_edge = connected_edge[0]
+
+        # TODO: another example of how much simpler it would be if we had an Edge class
+        # TODO: also - now we're picking a random edge and then making sure it's not the same as one we already have
+        # we could just filter those options out in the first place
+        if (
+            step["in_node"] == connected_edge[1]
+            and step["out_node"] == connected_edge[0]
+            and step["in"] == connected_edge[2]["in"]
+            and step["out"] == connected_edge[2]["out"]
+        ):
+            return None  # if the edge was already there, we don't need to do anything
+
         step = {
             "in_node": connected_edge[1],
             "out_node": connected_edge[0],
@@ -215,12 +228,25 @@ def add_random_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
     return TwoWayVariationDescriptor([forward], [backwards])
 
 
-def remove_random_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
+def remove_random_edge(nm: NetworkManager) -> Optional[TwoWayVariationDescriptor]:
     """
     Remove a random edge from the network
     """
     edges = list(nm.network.edges(data=True))
-    selected_edge = edges[np.random.randint(0, len(edges))]
+    # remove edges that are connected to the input node as vector input (removing them does not make sense, as they automatically connect)
+    legit_edges = []
+    for edge in edges:
+        if edge[0] != "InputNode_1":
+            legit_edges.append(edge)
+        else:
+            target_type = nm.node_name_to_node_type(edge[1])
+            vector_input_names = target_type.get_node_type_params(ParamRequestType.VECTOR_INPUT)
+            if edge[2]["in"] not in vector_input_names:
+                legit_edges.append(edge)
+    if len(legit_edges) == 0:
+        return None
+
+    selected_edge = legit_edges[np.random.randint(0, len(legit_edges))]
     step = {
         "out_node": selected_edge[0],
         "in_node": selected_edge[1],
@@ -232,13 +258,16 @@ def remove_random_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
     return TwoWayVariationDescriptor([forward], [backwards])
 
 
-def remove_random_node(nm: NetworkManager) -> TwoWayVariationDescriptor:
+def remove_random_node(nm: NetworkManager) -> Optional[TwoWayVariationDescriptor]:
     """
     Remove a random node from the network
     """
     nodes = [node for node in nm.network.nodes() if node not in ["InputNode_1", "OutputNode_1"]]
+    if len(nodes) == 0:
+        return None
     node_to_remove = np.random.choice(nodes)
     return create_remove_node_variation(nm, node_to_remove)
+
 
 def create_remove_node_variation(nm: NetworkManager, node_to_remove: str) -> TwoWayVariationDescriptor:
     """
@@ -306,11 +335,39 @@ def create_remove_node_variation(nm: NetworkManager, node_to_remove: str) -> Two
     return TwoWayVariationDescriptor([forward], backwards_steps)
 
 
+def to_nothing_variation(nm: NetworkManager) -> TwoWayVariationDescriptor:
+    """
+    Create a variation that removes all nodes from the network - and the opposite, from nothing to the whole network
+    We have to create a copy and apply the variations at each steps to the copy - because the actual definition of the
+    variation depends on the state of the network at each step.
+    """
+    nm_for_change = nm.copy()
+    nodes_to_remove = [x for x in nm_for_change.network.nodes() if x not in ["OutputNode_1", "InputNode_1"]]
+    # remove them in a random order
+    np.random.shuffle(nodes_to_remove)
+    # get a random order of all nodes that need to be removed until we have an empty network
+    steps_forwards = []
+    process_backwards = []
+    for node in nodes_to_remove:
+        twoway_variation = create_remove_node_variation(nm_for_change, node)
+        steps_forwards.extend(twoway_variation.steps_forward)
+        process_backwards.append(twoway_variation.steps_backward)
+        for variation in twoway_variation.steps_forward:
+            apply_variation(nm_for_change, variation)
+
+    # the backwards process requires the steps to be in reverse order, but the steps within each variation to be in order
+    steps_backwards = []
+    for steps in reversed(process_backwards):
+        steps_backwards.extend(steps)
+    return TwoWayVariationDescriptor(steps_forwards, steps_backwards)
+
+
 def apply_variation(nm: NetworkManager, variation: VariationDescriptor):
     """
     Apply the variation to the network
     """
     step = variation.step
+    assert len(step) > 0, "Variation cannot be empty"
     if variation.variation_type in [VariationType.SEED, VariationType.NUMERIC, VariationType.CAT_AND_NUMERIC]:
         nm.set_nodes_attributes(step)
 

@@ -8,7 +8,7 @@ VALUE = "Value"
 COLOR = "Color"
 RESULT = "Result"
 
-seed_value_range = (0, 1000)
+seed_value_range = [0, 1000]
 
 # TODO: remove the \n from the beginning of every code, have a func to add line?
 # TODO: deliver the method for creating links between nodes to the node instances
@@ -30,13 +30,14 @@ class ParamRequestType(Enum):
     ALL = 4
     NON_VECTOR_INPUT = 5
     NON_SEED = 6
+    VECTOR_INPUT = 7
 
 
 @dataclass
 class Param:
     name: Union[str, int]
-    options_range: tuple
-    default: Union[tuple, str, float]
+    options_range: list
+    default: Union[list, str, float]
     param_type: ParamType
 
 
@@ -154,6 +155,10 @@ class Node(object):
             relevant_dict = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
         elif param_type == ParamRequestType.NON_SEED:
             relevant_dict = {**cls.NUMERIC, **cls.CATEGORICAL}
+        elif param_type == ParamRequestType.VECTOR_INPUT:
+            relevant_dict = {
+                key: value for key, value in cls.NUMERIC.items() if value.param_type == ParamType.VECTOR_INPUT
+            }
         elif param_type == ParamRequestType.NON_VECTOR_INPUT:
             all_params = {**cls.SEED, **cls.NUMERIC, **cls.CATEGORICAL}
             relevant_dict = {
@@ -231,9 +236,9 @@ class Node(object):
 class CombineXYZ(Node):
     NAME = "CombineXYZ"
     NUMERIC = [
-        NumericInput("X", (-10, 10), 0, ParamType.FLOAT, True),
-        NumericInput("Y", (-10, 10), 0, ParamType.FLOAT, True),
-        NumericInput("Z", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("X", [-10, 10], 0, ParamType.FLOAT, True),
+        NumericInput("Y", [-10, 10], 0, ParamType.FLOAT, True),
+        NumericInput("Z", [-10, 10], 0, ParamType.FLOAT, True),
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
@@ -251,9 +256,9 @@ class CombineXYZ(Node):
 class Mapping(Node):
     NAME = "Mapping"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Location", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
-        NumericInput("Scale", (0, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("Location", [-10, 10], [0, 0, 0], ParamType.VECTOR, True),
+        NumericInput("Scale", [0, 10], [0, 0, 0], ParamType.VECTOR, True),
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
@@ -270,13 +275,13 @@ class Mapping(Node):
 class Math(Node):
     NAME = "Math"
     NUMERIC = [
-        NumericInput("value_0", (-10, 10), 0, ParamType.FLOAT, True),
-        NumericInput("value_1", (-10, 10), 0, ParamType.FLOAT, True),
+        NumericInput("value_0", [-10, 10], 0, ParamType.FLOAT, True),
+        NumericInput("value_1", [-10, 10], 0, ParamType.FLOAT, True),
     ]
     CATEGORICAL = [
         Param(
             "operation",
-            ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "POWER", "SQRT", "ABSOLUTE"),
+            ["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "POWER", "SQRT", "ABSOLUTE"],
             "ADD",
             ParamType.CATEGORICAL,
         )
@@ -306,9 +311,9 @@ class Math(Node):
 class MixFloat(Node):
     NAME = "MixFloat"
     NUMERIC = [
-        NumericInput("Factor", (0, 1), 0.5, ParamType.FLOAT, True),
-        NumericInput("A", (0, 1), 0, ParamType.FLOAT, True),
-        NumericInput("B", (0, 1), 0, ParamType.FLOAT, True),
+        NumericInput("Factor", [0, 1], 0.5, ParamType.FLOAT, True),
+        NumericInput("A", [0, 1], 0, ParamType.FLOAT, True),
+        NumericInput("B", [0, 1], 0, ParamType.FLOAT, True),
     ]
     OUTPUTS = [Output(RESULT, ParamType.FLOAT)]
 
@@ -325,14 +330,14 @@ class MixFloat(Node):
 class MixVector(Node):
     NAME = "MixVector"
     NUMERIC = [
-        NumericInput("Factor", (0, 1), 0, ParamType.FLOAT, True),
-        NumericInput("A", (0, 1), (0, 0, 0), ParamType.VECTOR, True),
-        NumericInput("B", (0, 1), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("Factor", [0, 1], 0, ParamType.FLOAT, True),
+        NumericInput("A", [0, 1], [0, 0, 0], ParamType.VECTOR, True),
+        NumericInput("B", [0, 1], [0, 0, 0], ParamType.VECTOR, True),
     ]
     CATEGORICAL = [
         Param(
             "blend_type",
-            ("MIX", "MULTIPLY", "BURN", "DODGE", "ADD", "OVERLAY", "SUBTRACT"),
+            ["MIX", "MULTIPLY", "BURN", "DODGE", "ADD", "OVERLAY", "SUBTRACT"],
             "ADD",
             ParamType.CATEGORICAL,
         )
@@ -357,7 +362,7 @@ class MixVector(Node):
 
 class SeparateXYZ(Node):
     NAME = "SeparateXYZ"
-    NUMERIC = [NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True)]
+    NUMERIC = [NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True)]
     OUTPUTS = [
         Output("X", ParamType.FLOAT),
         Output("Y", ParamType.FLOAT),
@@ -377,7 +382,7 @@ class SeparateXYZ(Node):
 class InputNode(Node):
     NAME = "InputNode"
     OUTPUTS = [Output("Vector", ParamType.VECTOR)]
-    NUMERIC = [NumericInput("X location", (-1, 1), 0, ParamType.FLOAT, False)]
+    NUMERIC = [NumericInput("X location", [-1, 1], 0, ParamType.FLOAT, False)]
     # just rotating the whole texture counts as a "seed" since it creates a non-meaningful change to the texture
     SEED = [Param("Z Rotation", seed_value_range, 0, ParamType.SEED)]
 
@@ -396,9 +401,9 @@ class InputNode(Node):
 class TexGabor(Node):
     NAME = "TexGabor"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, False),
-        NumericInput("Frequency", (0, 10), 2, ParamType.FLOAT, False),
+        NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
+        NumericInput("Frequency", [0, 10], 2, ParamType.FLOAT, False),
     ]
     OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
     SEED = [Param("Orientation", seed_value_range, 0, ParamType.SEED)]
@@ -416,11 +421,11 @@ class TexGabor(Node):
 
 class TexGradient(Node):
     NAME = "TexGradient"
-    NUMERIC = [NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True)]
+    NUMERIC = [NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True)]
     CATEGORICAL = [
         Param(
             "gradient_type",
-            ("LINEAR", "DIAGONAL", "SPHERICAL", "RADIAL"),
+            ["LINEAR", "DIAGONAL", "SPHERICAL", "RADIAL"],
             "LINEAR",
             ParamType.CATEGORICAL,
         )
@@ -439,10 +444,10 @@ class TexGradient(Node):
 class TexNoise(Node):
     NAME = "TexNoise"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, False),
-        NumericInput("Lacunarity", (0, 10), 2, ParamType.FLOAT, False),
-        NumericInput("Distortion", (0, 5), 0, ParamType.FLOAT, False),
+        NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
+        NumericInput("Lacunarity", [0, 10], 2, ParamType.FLOAT, False),
+        NumericInput("Distortion", [0, 5], 0, ParamType.FLOAT, False),
     ]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
     SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
@@ -462,11 +467,11 @@ class TexNoise(Node):
 class TexVoronoiF(Node):
     NAME = "TexVoronoiF"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, True),
-        NumericInput("Randomness", (0, 1), 1, ParamType.FLOAT, False),
+        NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, True),
+        NumericInput("Randomness", [0, 1], 1, ParamType.FLOAT, False),
     ]
-    CATEGORICAL = [Param("distance", ("EUCLIDEAN", "CHEBYCHEV"), "EUCLIDEAN", ParamType.CATEGORICAL)]
+    CATEGORICAL = [Param("distance", ["EUCLIDEAN", "CHEBYCHEV"], "EUCLIDEAN", ParamType.CATEGORICAL)]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
     SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
 
@@ -488,11 +493,11 @@ class TexVoronoiF(Node):
 class TexWave(Node):
     NAME = "TexWave"
     NUMERIC = [
-        NumericInput(VECTOR, (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", (0, 10), 5, ParamType.FLOAT, False),
-        NumericInput("Distortion", (0, 5), 0, ParamType.FLOAT, False),
+        NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
+        NumericInput("Distortion", [0, 5], 0, ParamType.FLOAT, False),
     ]
-    CATEGORICAL = [Param("wave_profile", ("SIN", "SAW"), "SIN", ParamType.CATEGORICAL)]
+    CATEGORICAL = [Param("wave_profile", ["SIN", "SAW"], "SIN", ParamType.CATEGORICAL)]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
     SEED = [Param("Phase Offset", seed_value_range, 0, ParamType.SEED)]
 
@@ -514,9 +519,9 @@ class TexWave(Node):
 class ValToRGB(Node):
     NAME = "ValToRGB"
     NUMERIC = [
-        NumericInput("Fac", (0, 1), 0, ParamType.FLOAT, True),
-        NumericInput("element_0", (0, 1), 0, ParamType.FLOAT, False),
-        NumericInput("element_1", (0, 1), 1, ParamType.FLOAT, False),
+        NumericInput("Fac", [0, 1], 0, ParamType.FLOAT, True),
+        NumericInput("element_0", [0, 1], 0, ParamType.FLOAT, False),
+        NumericInput("element_1", [0, 1], 1, ParamType.FLOAT, False),
     ]
     OUTPUTS = [Output(COLOR, ParamType.VECTOR)]
 
@@ -534,7 +539,7 @@ class ValToRGB(Node):
 class Value(Node):
     NAME = "Value"
     NUMERIC = [
-        NumericInput(VALUE, (-10, 10), 0, ParamType.FLOAT, False),
+        NumericInput(VALUE, [-10, 10], 0, ParamType.FLOAT, False),
     ]
     OUTPUTS = [Output(VALUE, ParamType.FLOAT)]
 
@@ -550,13 +555,13 @@ class Value(Node):
 class VectorMath(Node):
     NAME = "VectorMath"
     NUMERIC = [
-        NumericInput("vector_0", (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
-        NumericInput("vector_1", (-10, 10), (0, 0, 0), ParamType.VECTOR_INPUT, True),
+        NumericInput("vector_0", [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("vector_1", [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
     ]
     CATEGORICAL = [
         Param(
             "operation",
-            ("ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "CROSS_PRODUCT", "ABSOLUTE", "FRACTION"),
+            ["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "CROSS_PRODUCT", "ABSOLUTE", "FRACTION"],
             "ADD",
             ParamType.CATEGORICAL,
         )
@@ -584,7 +589,7 @@ class VectorMath(Node):
 class OutputNode(Node):
     NAME = "Output"
     NUMERIC = [
-        NumericInput("Color", (-10, 10), (0, 0, 0), ParamType.VECTOR, True),
+        NumericInput("Color", [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
     ]
 
     def __init__(self, inputs, numeric, categorical, node_name):

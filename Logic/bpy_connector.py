@@ -1,5 +1,7 @@
 import bpy
 
+from Logic.utils import is_empty_image
+
 
 def purge_orphans():
     """
@@ -78,10 +80,17 @@ def set_for_texture_generation():
     bpy.context.scene.world.node_tree.nodes["Background"].inputs[1].default_value = 0  # Strength
 
 
-def settings_for_texture_generation(path, resolution=512):
+def set_file_path(file_path):
+    """
+    Set the file path for the render
+    :param file_path:
+    """
+    bpy.context.scene.render.filepath = file_path
+
+
+def settings_for_texture_generation(resolution=512):
     """
     Set the render settings for texture generation
-    :param path: file path to save the texture
     :param resolution:
     """
     scene = bpy.data.scenes["Scene"]
@@ -89,7 +98,6 @@ def settings_for_texture_generation(path, resolution=512):
     scene.render.resolution_y = resolution
     scene.render.image_settings.color_mode = "BW"  # black and white for now
     bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"
-    bpy.context.scene.render.filepath = path
     bpy.context.scene.render.image_settings.file_format = "PNG"
     bpy.context.scene.render.use_simplify = True  # to speed up the rendering
     bpy.context.scene.eevee.use_shadows = False  # to speed up the rendering
@@ -110,3 +118,26 @@ class NodesAdder(object):
         for attr, value in kwargs.items():
             setattr(node, attr, value)
         return node
+
+
+def generate_image(nm, image_path):
+    code = nm.generate_code(with_initialization_code=False)
+    clean_scene()
+    set_for_texture_generation()
+    settings_for_texture_generation(resolution=512)
+    set_file_path(image_path)
+    material = bpy.data.materials.new(name="my_material")
+    material.use_nodes = True
+    bpy.data.objects["Plane"].data.materials.append(material)
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    [nodes.remove(n) for n in nodes]
+    node_tree = material.node_tree
+    nodes_adder = NodesAdder(material.node_tree)
+    exec(code)
+    bpy.ops.render.render(write_still=True)
+
+
+def check_nm_not_empty(nm):
+    generate_image(nm, "/tmp/tmp.png")
+    return is_empty_image("/tmp/tmp.png")
