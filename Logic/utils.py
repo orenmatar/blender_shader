@@ -1,6 +1,11 @@
 import json
+from types import MappingProxyType
+from typing import Any
+
 import networkx as nx
 from PIL import Image
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import numpy as np
 
 
@@ -48,3 +53,69 @@ def compare_dicts(d1, d2):
     Compare two dictionaries, ignoring list/tuple differences.
     """
     return normalize(d1) == normalize(d2)
+
+
+def deep_freeze(obj: Any) -> Any:
+    """
+    Recursively converts a dictionary (and its nested structures) into immutable forms.
+    - Dicts are wrapped in MappingProxyType.
+    - Lists are converted to tuples.
+    - Other mutable types can be handled as needed.
+    """
+    if isinstance(obj, dict):
+        return MappingProxyType({k: deep_freeze(v) for k, v in obj.items()})
+    elif isinstance(obj, list):
+        return tuple(deep_freeze(v) for v in obj)
+    elif isinstance(obj, set):
+        return frozenset(deep_freeze(v) for v in obj)
+    # Add more cases here if necessary
+    else:
+        return obj  # Immutable types (e.g., int, float, str, tuple) are returned as-is
+
+def deep_unfreeze(obj: Any) -> Any:
+    """
+    Recursively converts immutable objects (like MappingProxyType, tuple, frozenset)
+    into their mutable counterparts (dict, list, set).
+    """
+    if isinstance(obj, (MappingProxyType, dict)):
+        return {k: deep_unfreeze(v) for k, v in obj.items()}
+    elif isinstance(obj, (tuple, list)):
+        return [deep_unfreeze(v) for v in obj]
+    elif isinstance(obj, (frozenset, set)):
+        return {deep_unfreeze(v) for v in obj}
+    else:
+        return obj  # Immutable types (e.g., int, float, str) are returned as-is
+
+
+def show_image_grid(image_data):
+    """
+    Display a grid of up to 4x4 grayscale images with text above each image.
+
+    Parameters:
+        image_data (list of tuples): A list of tuples where each tuple contains:
+            - image_path (str): Path to the image file.
+            - title (str): Text to display above the image.
+    """
+    # Limit to the first 16 images
+    image_data = image_data[:16]
+
+    # Determine the grid size (up to 4x4)
+    num_images = len(image_data)
+    grid_size = int(min(4, num_images ** 0.5))
+
+    # Create the figure and axes
+    fig, axes = plt.subplots(grid_size, grid_size, figsize=(12, 12))
+    axes = axes.flatten()  # Flatten for easy iteration
+
+    # Loop through the images and add them to the grid
+    for i, ax in enumerate(axes):
+        if i < num_images:
+            image_path, title = image_data[i]
+            img = mpimg.imread(image_path)
+            # Display image in grayscale
+            ax.imshow(img, cmap='gray')
+            ax.set_title(title, fontsize=10, color='black')  # Add text above the image
+        ax.axis('off')  # Turn off axes for all subplots
+
+    plt.tight_layout()
+    plt.show()

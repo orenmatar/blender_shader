@@ -86,6 +86,8 @@ def in_out_types_to_list_of_allowed(in_out_types: InOutType):
             InOutType.VECTOR_OR_COLOR,
             InOutType.ANY,
         }
+    if in_out_types == InOutType.OUTPUT:
+        return {InOutType.OUTPUT, InOutType.VECTOR_OR_COLOR, InOutType.COLOR, InOutType.VECTOR}
     return {in_out_types}
 
 

@@ -129,6 +129,10 @@ nodes_adder = NodesAdder(material.node_tree)
             manager_data = json.load(f)
         return NetworkManager.from_dict(manager_data)
 
+    def is_empty_network(self):
+        """Returns True if the network is meaningless - the input connected directly to the output"""
+        return self.network.has_edge('InputNode_1', 'OutputNode_1')
+
     def network_data_for_comparison(self):
         """
         Get the network data for comparison - only the important properties, sorted so it is easy to compare

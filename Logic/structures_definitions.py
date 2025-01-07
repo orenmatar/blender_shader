@@ -318,7 +318,6 @@ ALL_META_NODES = [
 MEGA_STRUCTURES = [mega_structure1, mega_structure2]
 
 if __name__ == "__main__":
-    meta_nodes = [mega_structure2, burn_dodge]
-    manager = MetaNetworkManager(meta_nodes, max_layers=2, n_additions=2)
+    manager = MetaNetworkManager(MEGA_STRUCTURES, max_layers=2, n_additions=2)
     manager.generate_network()
     nm = manager.meta_network_to_flat_network()

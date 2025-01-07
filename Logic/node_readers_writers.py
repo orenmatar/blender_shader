@@ -382,9 +382,12 @@ class SeparateXYZ(Node):
 class InputNode(Node):
     NAME = "InputNode"
     OUTPUTS = [Output("Vector", ParamType.VECTOR)]
-    NUMERIC = [NumericInput("X location", [-1, 1], 0, ParamType.FLOAT, False)]
+    NUMERIC = []
     # just rotating the whole texture counts as a "seed" since it creates a non-meaningful change to the texture
-    SEED = [Param("Z Rotation", seed_value_range, 0, ParamType.SEED)]
+    SEED = [
+        Param("Z Rotation", seed_value_range, 0, ParamType.SEED),
+        NumericInput("X location", [-1, 1], 0, ParamType.FLOAT, False),
+    ]
 
     def __init__(self, inputs, numeric, categorical, node_name, seeds):
         super().__init__(inputs, numeric, categorical, node_name, seeds)
@@ -392,7 +395,7 @@ class InputNode(Node):
     def to_code(self, func_name, node_tree_name="node_tree"):
         code = f'\ninput_coor = {func_name}("ShaderNodeTexCoord")'
         code += f'\n{self.node_name} = {func_name}("ShaderNodeMapping")'
-        code += f'\n{self.node_name}.inputs["Location"].default_value[0] = {self.numeric["X location"]}'
+        code += f'\n{self.node_name}.inputs["Location"].default_value[0] = {self.seeds["X location"]}'
         code += f'\n{self.node_name}.inputs["Rotation"].default_value[2] = {self.seeds["Z Rotation"]}'
         code += f'\n{node_tree_name}.links.new(input_coor.outputs["Object"], {self.node_name}.inputs["Vector"])'
         return code

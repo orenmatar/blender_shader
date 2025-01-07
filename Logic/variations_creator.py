@@ -1,15 +1,17 @@
 from collections import defaultdict
-from typing import List, Optional
+from types import MappingProxyType
+from typing import List, Optional, Mapping
 from uuid import uuid4
 
 import networkx as nx
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import uuid
 
 from Logic.network_manager import NetworkManager
 from Logic.node_readers_writers import ParamRequestType, ParamType
+from Logic.utils import deep_freeze, deep_unfreeze
 
 
 class VariationType(Enum):
@@ -25,8 +27,11 @@ class VariationType(Enum):
 @dataclass
 class VariationDescriptor:
     variation_type: VariationType
-    step: dict
+    step: Mapping = field(default_factory=dict)
 
+    def __post_init__(self):
+        # Ensure step is deeply immutable
+        self.step = deep_freeze(self.step)
 
 @dataclass
 class TwoWayVariationDescriptor:
@@ -407,3 +412,18 @@ def apply_variation(nm: NetworkManager, variation: VariationDescriptor):
 
     # re calc layers anc connect vector inputs that must be connected, if something happened to them
     nm.finish_network()
+
+
+def add_two_steps(first_step: Mapping, second_step: Mapping) -> dict:
+    combined_step = defaultdict(dict, deep_unfreeze(first_step))  # copy it and unfreeze to update
+    # the second steps adds and overrides params from the first
+    for key, vals in second_step.items():
+        for name, value in vals.items():
+            combined_step[key][name] = value
+    return combined_step
+
+
+def add_two_variations(first_variation: VariationDescriptor, second_variation: VariationDescriptor) -> VariationDescriptor:
+    assert first_variation.variation_type == second_variation.variation_type
+    step = add_two_steps(first_variation.step, second_variation.step)
+    return VariationDescriptor(variation_type=first_variation.variation_type, step=step)
