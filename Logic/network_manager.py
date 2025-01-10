@@ -27,6 +27,7 @@ class NetworkManager(object):
         "TexGradient": TexGradient,
         "TexNoise": TexNoise,
         "TexVoronoiF": TexVoronoiF,
+        "TexVoronoiDistance": TexVoronoiDistance,
         "TexWave": TexWave,
         "ValToRGB": ValToRGB,
         "Value": Value,
@@ -36,7 +37,9 @@ class NetworkManager(object):
     }
     OutputNodeNAME = "OutputNode"
     InputNodeNAME = "InputNode"
-    NODE_TYPES_FOR_GENERATION = [node_name for node_name in NODE_TYPES if node_name not in ["OutputNode", "InputNode"]]
+    NODE_TYPES_FOR_GENERATION = [
+        node_name for node_name in NODE_TYPES if node_name not in ["OutputNode", "InputNode", "Value", "MixFloat"]
+    ]
     INITIALIZATION_CODE = """import bpy
 import sys
 sys.path.append('/Users/orenm/BlenderShaderProject/project_files/')
@@ -64,7 +67,7 @@ nodes_adder = NodesAdder(material.node_tree)
         self.node_counts = defaultdict(int)  # node_name -> count of nodes of this type, so we can set unique names
         self.free_inputs = {}  # node_name -> set of free inputs we can connect to at the moment
         # TODO: these should probably just be constants
-        self.in_node_name, self.out_node_name = "InputNode_1", "OutputNode_1"
+        self.input_node_name, self.output_node_name = "InputNode_1", "OutputNode_1"
         self.node_value_ranges_name = "node_value_ranges"
 
     def copy(self):
@@ -75,8 +78,8 @@ nodes_adder = NodesAdder(material.node_tree)
         new_manager.network = self.network.copy()
         new_manager.node_counts = copy.deepcopy(self.node_counts)
         new_manager.free_inputs = copy.deepcopy(self.free_inputs)
-        new_manager.in_node_name = self.in_node_name
-        new_manager.out_node_name = self.out_node_name
+        new_manager.input_node_name = self.input_node_name
+        new_manager.output_node_name = self.output_node_name
         new_manager.node_value_ranges_name = self.node_value_ranges_name
         return new_manager
 
@@ -90,8 +93,8 @@ nodes_adder = NodesAdder(material.node_tree)
         manager_data = {
             "node_counts": self.node_counts,
             "free_inputs": free_inputs_as_list,
-            "in_node_name": self.in_node_name,
-            "out_node_name": self.out_node_name,
+            "in_node_name": self.input_node_name,
+            "out_node_name": self.output_node_name,
             "node_value_ranges_name": self.node_value_ranges_name,
             "network_data": network_data,
         }
@@ -113,8 +116,8 @@ nodes_adder = NodesAdder(material.node_tree)
         new_manager = NetworkManager()
         new_manager.node_counts = manager_data["node_counts"]
         new_manager.free_inputs = manager_data["free_inputs"]
-        new_manager.in_node_name = manager_data["in_node_name"]
-        new_manager.out_node_name = manager_data["out_node_name"]
+        new_manager.input_node_name = manager_data["in_node_name"]
+        new_manager.output_node_name = manager_data["out_node_name"]
         new_manager.node_value_ranges_name = manager_data["node_value_ranges_name"]
         network = nx.node_link_graph(manager_data["network_data"], edges="edges")
         new_manager.network = network
@@ -131,7 +134,7 @@ nodes_adder = NodesAdder(material.node_tree)
 
     def is_empty_network(self):
         """Returns True if the network is meaningless - the input connected directly to the output"""
-        return self.network.has_edge('InputNode_1', 'OutputNode_1')
+        return self.network.has_edge("InputNode_1", "OutputNode_1")
 
     def network_data_for_comparison(self):
         """
@@ -148,6 +151,17 @@ nodes_adder = NodesAdder(material.node_tree)
         # make a sorted list of edges, so it is easy to compare, with the dict of attributes as a frozenset
         all_edges = sorted([(node1, node2, frozenset(data)) for node1, node2, data in self.network.edges(data=True)])
         return all_nodes, all_edges
+
+    @staticmethod
+    def find_nodes_differences(network1, network2):
+        differences = defaultdict(dict)
+        nodes1, edges1 = network1.network_data_for_comparison()
+        nodes2, edges2 = network2.network_data_for_comparison()
+        for node_name, vals in nodes1.items():
+            for val_name, val in vals.items():
+                if val != nodes2[node_name][val_name]:
+                    differences[node_name][val_name] = (val, nodes2[node_name][val_name])
+        return differences
 
     @staticmethod
     def compare_networks(network1, network2, compare_node_properties=True):
@@ -171,8 +185,8 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         Initialize the network with input and output nodes
         """
-        self.out_node_name = self.add_node_by_type_name(self.OutputNodeNAME)
-        self.in_node_name = self.add_node_by_type_name(self.InputNodeNAME)
+        self.output_node_name = self.add_node_by_type_name(self.OutputNodeNAME)
+        self.input_node_name = self.add_node_by_type_name(self.InputNodeNAME)
 
     def apply_distribution_limitations(self, nodes_and_dist: Dict[str, Dict[str, Tuple[tuple, ParamType]]]):
         """
@@ -219,7 +233,7 @@ nodes_adder = NodesAdder(material.node_tree)
         Generate a random network by adding nodes and connecting them randomly
         ONLY after initialization (consider adding assert)
         """
-        assert self.out_node_name in self.network.nodes, "Network must be initialized"
+        assert self.output_node_name in self.network.nodes, "Network must be initialized"
         for i in range(n_additions):
             # pick a free input
             free_inputs = [node_name for node_name, inputs in self.free_inputs.items() if len(inputs) > 0]
@@ -238,7 +252,7 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         Finish the network by connecting all the nodes that must be connected to the input node
         """
-        assert self.out_node_name in self.network.nodes, "Network must be initialized"
+        assert self.output_node_name in self.network.nodes, "Network must be initialized"
         # node_name -> set of inputs that must be connected to - (vector inputs)
         must_connect_to_inputs = {}
         for node_name, node_type in self.NODE_TYPES.items():
@@ -254,7 +268,7 @@ nodes_adder = NodesAdder(material.node_tree)
         for node_name, free_inputs in self.free_inputs.items():
             for free_input in list(free_inputs):
                 if free_input in must_connect_to_inputs[self.node_name_to_node_type_name(node_name)]:
-                    self.add_edge(self.in_node_name, node_name, input_node_output_name, free_input)
+                    self.add_edge(self.input_node_name, node_name, input_node_output_name, free_input)
 
         self.calc_layers()
 
@@ -377,8 +391,8 @@ nodes_adder = NodesAdder(material.node_tree)
         """
         Calculates the layers of the nodes - their distance from output. Layer is important for visualization
         """
-        assert self.out_node_name in self.network.nodes, "Network must be initialized"
-        lengths = nx.shortest_path_length(self.network.reverse(copy=False), self.out_node_name)
+        assert self.output_node_name in self.network.nodes, "Network must be initialized"
+        lengths = nx.shortest_path_length(self.network.reverse(copy=False), self.output_node_name)
         for node, length in lengths.items():
             self.network.nodes[node]["layer"] = length + 1
         for node in self.network.nodes:

@@ -448,7 +448,7 @@ class TexNoise(Node):
     NAME = "TexNoise"
     NUMERIC = [
         NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, True),
         NumericInput("Lacunarity", [0, 10], 2, ParamType.FLOAT, False),
         NumericInput("Distortion", [0, 5], 0, ParamType.FLOAT, False),
     ]
@@ -471,7 +471,7 @@ class TexVoronoiF(Node):
     NAME = "TexVoronoiF"
     NUMERIC = [
         NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, True),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
         NumericInput("Randomness", [0, 1], 1, ParamType.FLOAT, False),
     ]
     CATEGORICAL = [Param("distance", ["EUCLIDEAN", "CHEBYCHEV"], "EUCLIDEAN", ParamType.CATEGORICAL)]
@@ -493,11 +493,36 @@ class TexVoronoiF(Node):
         return code
 
 
+class TexVoronoiDistance(Node):
+    NAME = "TexVoronoiDistance"
+    NUMERIC = [
+        NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
+        NumericInput("Randomness", [0, 1], 1, ParamType.FLOAT, False),
+    ]
+    OUTPUTS = [Output("Distance", ParamType.FLOAT)]
+    SEED = [Param("W", seed_value_range, 0, ParamType.SEED)]
+
+    def __init__(self, inputs, numeric, categorical, node_name, seeds):
+        super().__init__(inputs, numeric, categorical, node_name, seeds)
+
+    def to_code(self, func_name):
+        string_params = _dict_to_string_params({"feature": "DISTANCE_TO_EDGE"})
+        code = f'\n{self.node_name} = {func_name}("ShaderNodeTexVoronoi", {string_params}, voronoi_dimensions="4D")'
+        set_params = {
+            **self.seeds,
+            **{key: val for key, val in self.numeric.items() if key != VECTOR},
+        }
+        for key, value in set_params.items():
+            code += f'\n{self.node_name}.inputs["{key}"].default_value = {value}'
+        return code
+
+
 class TexWave(Node):
     NAME = "TexWave"
     NUMERIC = [
         NumericInput(VECTOR, [-10, 10], [0, 0, 0], ParamType.VECTOR_INPUT, True),
-        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, False),
+        NumericInput("Scale", [0, 10], 5, ParamType.FLOAT, True),
         NumericInput("Distortion", [0, 5], 0, ParamType.FLOAT, False),
     ]
     CATEGORICAL = [Param("wave_profile", ["SIN", "SAW"], "SIN", ParamType.CATEGORICAL)]

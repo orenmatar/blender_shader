@@ -1,6 +1,6 @@
 import json
 import time
-from typing import Dict
+from typing import Dict, List
 
 import networkx as nx
 import os
@@ -8,12 +8,12 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from IPython.core.display_functions import clear_output
 
-from Logic.bpy_connector import check_nm_not_empty, generate_image
+from Logic.bpy_connector import generate_image
 from Logic.meta_network import MetaNetworkManager
 from Logic.network_manager import NetworkManager
 from Logic.node_readers_writers import ParamRequestType
 from Logic.structures_definitions import ALL_META_NODES, MEGA_STRUCTURES
-from Logic.utils import is_empty_image, deep_unfreeze, deep_freeze
+from Logic.utils import deep_unfreeze, deep_freeze, check_nm_not_empty, is_empty_image
 from Logic.variations_creator import (
     TwoWayVariationDescriptor,
     apply_variation,
@@ -43,7 +43,7 @@ def get_labels_set(labels_set=None):
 class DBManager:
     def __init__(self, folder):
         self.network = nx.DiGraph()
-        self.network_managers: Dict[int, NetworkManager] = {}
+        self.network_managers: Dict[str, NetworkManager] = {}
         self.cluster_starts = set()
         self.folder = folder
 
@@ -91,7 +91,9 @@ class DBManager:
         self._add_edge(source_node_id, new_node_id, variation_descriptor)
         return new_node_id
 
-    def add_sequence(self, start_node_id, two_way_variation_descriptor: TwoWayVariationDescriptor, node_labels=None):
+    def add_sequence(
+        self, start_node_id, two_way_variation_descriptor: TwoWayVariationDescriptor, node_labels=None, contract=True
+    ):
         """Add a sequence of nodes starting from a given node."""
         assert start_node_id in self.network, "Start node does not exist."
         added_nodes = []
@@ -107,6 +109,21 @@ class DBManager:
 
         final_variation = two_way_variation_descriptor.steps_backward[-1]
         self._add_edge(current_node_id, start_node_id, final_variation)
+
+        # Contract nodes that have the same network manager
+        # This can happen as we remove nodes and then add them back and get the same network
+        # and also sometimes we "add edge" from input to a node that already has that edge
+        if contract:
+            # group to identical groups of nodes
+            node_groups = self.group_identical(added_nodes)
+            for group in node_groups:
+                if len(group) > 1:
+                    # pick the first in the group as the main node, the rest will merge into it
+                    main_node = group[0]
+                    for node in group[1:]:
+                        # add the others connections to the main node, and delete from network managers
+                        self.network = nx.contracted_nodes(self.network, main_node, node, self_loops=False)
+                        del self.network_managers[node]
         return added_nodes
 
     def add_node_label(self, node_id, attr_name):
@@ -125,7 +142,7 @@ class DBManager:
     def get_nodes_with_edge_type(self, edge_type):
         nodes = set()
         for u, v, data in self.network.edges(data=True):
-            if data['variation_type'] == edge_type:
+            if data["variation_type"] == edge_type:
                 nodes.add(u)
         return list(nodes)
 
@@ -136,6 +153,25 @@ class DBManager:
         edge_labels = nx.get_edge_attributes(self.network, "weight")
         nx.draw_networkx_edge_labels(self.network, pos, edge_labels=edge_labels)
         plt.show()
+
+    def group_identical(self, nodes: List[str]):
+        """
+        Group nodes that have the same network manager.
+        Returns a list of lists, where each inner list contains the nodes that belong to the same group.
+        """
+        groups = []
+        for node in nodes:
+            # Check if the object belongs to an existing group
+            for group in groups:
+                if (
+                    self.network_managers[node] == self.network_managers[group[0]]
+                ):  # Compare with a representative of the group
+                    group.append(node)
+                    break
+            else:
+                # If no group matches, create a new group
+                groups.append([node])
+        return groups
 
     def save(self, overwrite=False):
         """Save the current state of the network and network managers."""
@@ -183,7 +219,9 @@ class DBManager:
 
     def _generate_unique_id(self):
         """Generate a unique ID for a new node."""
-        return str(len(self.network.nodes))
+        existing_names = set(int(name) for name in self.network.nodes)
+        new_name = max(existing_names) + 1 if existing_names else 0
+        return str(new_name)
 
     @staticmethod
     def _apply_variation(network_manager: NetworkManager, variation: VariationDescriptor):
@@ -198,11 +236,11 @@ class DBManager:
         now = time.time()
         for i, node_id in enumerate(images_to_generate):
             clear_output(wait=True)
-            print(f'working on image {i}/{len(images_to_generate)}')
+            print(f"working on image {i}/{len(images_to_generate)}")
             nm = self.network_managers[node_id]
             img_path = os.path.join(images_path, f"{node_id}.png")
             if not override_images:
-                assert not os.path.exists(img_path), 'Image already exists!'
+                assert not os.path.exists(img_path), "Image already exists!"
             generate_image(nm, img_path)
             assert os.path.exists(img_path)
             self.add_node_label(node_id, HAS_IMAGE)
@@ -252,11 +290,11 @@ class DBManager:
             self.connect_existing_nodes(new_node_id, side_connection_id, connection)
 
 
-def change_seed(nm, n_changes=3):
+def change_seed(nm, n_changes=5):
     return non_structural_changes(nm, n_changes, ParamRequestType.SEED)
 
 
-def change_numeric(nm, n_changes=3):
+def change_numeric(nm, n_changes=4):
     return non_structural_changes(nm, n_changes, ParamRequestType.NUMERIC)
 
 
@@ -269,7 +307,7 @@ def completely_random_generation(n_additions=6, **kwargs):
     nm.initialize_network()
     nm.generate_random_network(n_additions=n_additions)
     nm.finish_network()
-    params_change = change_params(nm, n_changes=4)
+    params_change = change_params(nm, n_changes=15)
     apply_variation(nm, params_change.steps_forward[0])
     return nm
 
@@ -278,7 +316,7 @@ def regular_meta_nodes(max_layers=2, n_additions=3):
     manager = MetaNetworkManager(ALL_META_NODES, max_layers=max_layers, n_additions=n_additions)
     manager.generate_network()
     nm = manager.meta_network_to_flat_network()
-    params_change = change_params(nm, n_changes=4)
+    params_change = change_params(nm, n_changes=15)
     apply_variation(nm, params_change.steps_forward[0])
     return nm
 
@@ -287,7 +325,7 @@ def mega_nodes(max_layers=1, n_additions=1):
     manager = MetaNetworkManager(MEGA_STRUCTURES, max_layers=max_layers, n_additions=n_additions)
     manager.generate_network()
     nm = manager.meta_network_to_flat_network()
-    params_change = change_params(nm, n_changes=4)
+    params_change = change_params(nm, n_changes=15)
     apply_variation(nm, params_change.steps_forward[0])
     return nm
 
@@ -299,6 +337,22 @@ def make_cluster_base(make_initial_func, kwargs):
             return cluster_base
         cluster_base = make_initial_func(**kwargs)
     return cluster_base  # return an empty one if somehow it didn't work after 10 attempts
+
+
+def make_clusters(db_manager, n_clusters=5, cluster_func=regular_meta_nodes, cluster_kwargs=None):
+    if cluster_kwargs is None:
+        cluster_kwargs = {}
+    cluster_ids = []
+    for _ in range(n_clusters):
+        generation_label = base_func_type_label[cluster_func]
+        cluster_base = make_cluster_base(cluster_func, cluster_kwargs)
+        new_cluster_id = db_manager.add_cluster(cluster_base, labels_set=frozenset({generation_label}))
+        empty_network_variation = to_nothing_variation(cluster_base)
+        new_nodes = db_manager.add_sequence(
+            new_cluster_id, empty_network_variation, node_labels=frozenset({ON_PATH_TO_EMPTY})
+        )
+        cluster_ids.append(cluster_base)
+    return cluster_ids
 
 
 base_func_type_label = {

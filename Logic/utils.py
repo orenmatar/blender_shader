@@ -1,12 +1,15 @@
 import json
+import math
 from types import MappingProxyType
 from typing import Any
 
-import networkx as nx
 from PIL import Image
+import numpy as np
+import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-import numpy as np
+
+from Logic.bpy_connector import generate_image
 
 
 def sample_uniform(low=0, high=10, size=1):
@@ -26,12 +29,6 @@ def save_graph(graph, filename):
 def load_graph(filename):
     with open(filename, "r") as f:
         return nx.node_link_graph(json.load(f), edges="edges")
-
-
-def is_empty_image(image_path):
-    img = Image.open(image_path)
-    img_array = np.array(img)
-    return img_array.std() < 1
 
 
 def normalize(obj):
@@ -72,6 +69,7 @@ def deep_freeze(obj: Any) -> Any:
     else:
         return obj  # Immutable types (e.g., int, float, str, tuple) are returned as-is
 
+
 def deep_unfreeze(obj: Any) -> Any:
     """
     Recursively converts immutable objects (like MappingProxyType, tuple, frozenset)
@@ -99,9 +97,9 @@ def show_image_grid(image_data):
     # Limit to the first 16 images
     image_data = image_data[:16]
 
-    # Determine the grid size (up to 4x4)
+    # Calculate the grid size (smallest square that fits all images)
     num_images = len(image_data)
-    grid_size = int(min(4, num_images ** 0.5))
+    grid_size = math.ceil(num_images**0.5)  # Smallest square grid
 
     # Create the figure and axes
     fig, axes = plt.subplots(grid_size, grid_size, figsize=(12, 12))
@@ -112,10 +110,22 @@ def show_image_grid(image_data):
         if i < num_images:
             image_path, title = image_data[i]
             img = mpimg.imread(image_path)
-            # Display image in grayscale
-            ax.imshow(img, cmap='gray')
-            ax.set_title(title, fontsize=10, color='black')  # Add text above the image
-        ax.axis('off')  # Turn off axes for all subplots
+            ax.imshow(img, cmap="gray")
+            ax.set_title(title, fontsize=10, color="black")
+        else:
+            # Leave unused slots empty with no image or title
+            ax.axis("off")
 
     plt.tight_layout()
     plt.show()
+
+
+def is_empty_image(image_path):
+    img = Image.open(image_path)
+    img_array = np.array(img)
+    return img_array.std() < 1
+
+
+def check_nm_not_empty(nm):
+    generate_image(nm, "/tmp/tmp.png")
+    return is_empty_image("/tmp/tmp.png")

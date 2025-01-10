@@ -1,7 +1,5 @@
 import bpy
 
-from Logic.utils import is_empty_image
-
 
 def purge_orphans():
     """
@@ -136,8 +134,3 @@ def generate_image(nm, image_path):
     nodes_adder = NodesAdder(material.node_tree)
     exec(code)
     bpy.ops.render.render(write_still=True)
-
-
-def check_nm_not_empty(nm):
-    generate_image(nm, "/tmp/tmp.png")
-    return is_empty_image("/tmp/tmp.png")

@@ -212,7 +212,7 @@ tex_on_frac_on_scale = MetaNode(
     "tex_on_frac_on_scale",
     {
         "value": SubMetaNode(NODE_LIST_value),
-        "tex1": SubMetaNode(NODE_LIST_textures),
+        "tex1": SubMetaNode(NODE_LIST_textures_with_scale_input),
         "vec_math1": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("FRACTION",)}),
         "vec_math2": SubMetaNode(NODE_LIST_vector_math, allowed_params={"operation": ("MULTIPLY", "DIVIDE")}),
     },
@@ -220,7 +220,7 @@ tex_on_frac_on_scale = MetaNode(
         Con(IN, "vec_math2"),
         Con("value", "vec_math2"),  # value used to set all xyz to the same value
         Con("vec_math2", "vec_math1", in_names=["vector_0"]),
-        Con("vec_math1", "tex1"),
+        Con("vec_math1", "tex1", in_names=["Scale"]),
         Con("tex1", OUT),
     ],
     output_type=InOutType.COLOR,
@@ -233,7 +233,7 @@ mega_structure1 = MetaNode(
     {
         "mapping": SubMetaNode(NODE_LIST_mapping),
         "tex0": SubMetaNode(NODE_LIST_gradient),
-        "tex1": SubMetaNode(NODE_LIST_voronoi),
+        "tex1": SubMetaNode(NODE_LIST_textures_with_scale_input),
         "tex2": SubMetaNode(NODE_LIST_gradient),
         "value1": SubMetaNode(NODE_LIST_value),
         "value2": SubMetaNode(NODE_LIST_value, allowed_params={"Value": (-1, 0)}),

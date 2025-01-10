@@ -12,8 +12,9 @@ from enum import Enum
 IN = "IN"
 OUT = "OUT"
 
-NODE_LIST_textures = ("TexNoise", "TexWave", "TexGabor", "TexGradient", "TexVoronoiF")
-NODE_LIST_voronoi = ("TexVoronoiF",)
+NODE_LIST_textures = ("TexNoise", "TexWave", "TexGabor", "TexGradient", "TexVoronoiF", "TexVoronoiDistance")
+NODE_LIST_textures_with_scale_input = ("TexNoise", "TexWave")
+NODE_LIST_voronoi = ("TexVoronoiF", "TexVoronoiDistance")
 NODE_LIST_gradient = ("TexGradient",)
 NODE_LIST_mix_vector = ("MixVector",)
 NODE_LIST_mapping = ("Mapping",)
@@ -190,7 +191,7 @@ class MetaNetworkManager(object):
                 # sample the actual node from the sample group
                 node_type_name = np.random.choice(possible_types_names)
                 if node_type_name == nm.OutputNodeNAME:  # output node is added in initialization
-                    node_name = nm.out_node_name
+                    node_name = nm.output_node_name
                 else:
                     node_name = nm.add_node_by_type_name(node_type_name)
                 node_names_mapping[internal_name] = node_name

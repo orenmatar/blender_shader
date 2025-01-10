@@ -33,6 +33,7 @@ class VariationDescriptor:
         # Ensure step is deeply immutable
         self.step = deep_freeze(self.step)
 
+
 @dataclass
 class TwoWayVariationDescriptor:
     steps_forward: List[VariationDescriptor]
@@ -183,14 +184,14 @@ def add_random_edge(nm: NetworkManager) -> Optional[TwoWayVariationDescriptor]:
     """
     # choose from all nodes that have an input to them - not value node
     # TODO: probably best to make this not hard coded, have a method for nodes with no inputs
-    nodes_to_sample = [node for node in nm.network.nodes() if node != "InputNode_1" and "Value" not in node]
+    nodes_to_sample = [node for node in nm.network.nodes() if node != nm.input_node_name and "Value" not in node]
     in_node = np.random.choice(nodes_to_sample)  # select a node to connect to
     in_node_type = nm.node_name_to_node_type(in_node)
     inputs = list(in_node_type.get_inputs())
     input_to_connect = np.random.choice(inputs)  # select a random input to connect to, even if already connected
     descendants = nx.descendants(nm.network, in_node)
     # do not connect to self, or to descendants (that creates a cycle)
-    non_legit_nodes = descendants | {in_node, "OutputNode_1"}
+    non_legit_nodes = descendants | {in_node, nm.output_node_name}
     possible_connections = [node for node in nm.network.nodes() if node not in non_legit_nodes]
     out_node = np.random.choice(possible_connections)
     out_node_type = nm.node_name_to_node_type(out_node)
@@ -241,7 +242,7 @@ def remove_random_edge(nm: NetworkManager) -> Optional[TwoWayVariationDescriptor
     # remove edges that are connected to the input node as vector input (removing them does not make sense, as they automatically connect)
     legit_edges = []
     for edge in edges:
-        if edge[0] != "InputNode_1":
+        if edge[0] != nm.input_node_name:
             legit_edges.append(edge)
         else:
             target_type = nm.node_name_to_node_type(edge[1])
@@ -267,7 +268,7 @@ def remove_random_node(nm: NetworkManager) -> Optional[TwoWayVariationDescriptor
     """
     Remove a random node from the network
     """
-    nodes = [node for node in nm.network.nodes() if node not in ["InputNode_1", "OutputNode_1"]]
+    nodes = [node for node in nm.network.nodes() if node not in [nm.input_node_name, nm.output_node_name]]
     if len(nodes) == 0:
         return None
     node_to_remove = np.random.choice(nodes)
@@ -347,13 +348,12 @@ def to_nothing_variation(nm: NetworkManager) -> TwoWayVariationDescriptor:
     variation depends on the state of the network at each step.
     """
     nm_for_change = nm.copy()
-    nodes_to_remove = [x for x in nm_for_change.network.nodes() if x not in ["OutputNode_1", "InputNode_1"]]
-    # remove them in a random order
-    np.random.shuffle(nodes_to_remove)
-    # get a random order of all nodes that need to be removed until we have an empty network
     steps_forwards = []
     process_backwards = []
-    for node in nodes_to_remove:
+    while True:
+        if len(nm_for_change.network) == 2:
+            break
+        node = _get_node_for_removal(nm_for_change)
         twoway_variation = create_remove_node_variation(nm_for_change, node)
         steps_forwards.extend(twoway_variation.steps_forward)
         process_backwards.append(twoway_variation.steps_backward)
@@ -364,6 +364,13 @@ def to_nothing_variation(nm: NetworkManager) -> TwoWayVariationDescriptor:
     steps_backwards = []
     for steps in reversed(process_backwards):
         steps_backwards.extend(steps)
+
+    # since each time we remove a node we create several backward steps - for adding it and then changing the params back
+    # we create lots of param changes, when really they can all be combined into one step. so we combine them here.
+    structural = [x for x in steps_backwards if x.variation_type != VariationType.CAT_AND_NUMERIC]
+    non_structural = [x for x in steps_backwards if x.variation_type == VariationType.CAT_AND_NUMERIC]
+    # if len(non_structural) >= 2:
+    #     steps_backwards = structural+ [add_several_variations(non_structural)]
     return TwoWayVariationDescriptor(steps_forwards, steps_backwards)
 
 
@@ -423,7 +430,50 @@ def add_two_steps(first_step: Mapping, second_step: Mapping) -> dict:
     return combined_step
 
 
-def add_two_variations(first_variation: VariationDescriptor, second_variation: VariationDescriptor) -> VariationDescriptor:
+def add_two_variations(
+    first_variation: VariationDescriptor, second_variation: VariationDescriptor
+) -> VariationDescriptor:
     assert first_variation.variation_type == second_variation.variation_type
     step = add_two_steps(first_variation.step, second_variation.step)
     return VariationDescriptor(variation_type=first_variation.variation_type, step=step)
+
+
+def add_several_variations(variations: List[VariationDescriptor]) -> VariationDescriptor:
+    result = add_two_variations(variations[0], variations[1])
+    for variation in variations[2:]:
+        result = add_two_variations(result, variation)
+    return result
+
+
+def _get_node_for_removal(nm):
+    """
+    Get a node to remove from the network - based on the logic that we want to remove a node that is not connected to
+    the input or output node, and start with nodes with fewest connections - since removing a node with several
+    connections can create areas of the tree that are not connected to the output at all. These areas are bad because
+    when we remove a node from them it will have no effect on the output, so there will be no change in the image
+    and we learn nothing from it.
+    """
+
+    # Define the sorting key
+    def sorting_key(node):
+        # Special score for nodes connected to both `start_node` and `end_node`
+        special_score = (
+            1
+            if nm.input_node_name in nm.network.predecessors(node)
+            and nm.output_node_name in nm.network.successors(node)
+            else 0
+        )
+        # In-degree score
+        return special_score, nm.network.in_degree(node)
+
+    eligible_nodes = [x for x in nm.network.nodes if x not in [nm.input_node_name, nm.output_node_name]]
+    # Sort all nodes based on the custom sorting key
+    sorted_nodes = sorted(eligible_nodes, key=sorting_key)
+
+    # Get the best value of the sorting key from the first node
+    best_value = sorting_key(sorted_nodes[0])
+
+    # Return all nodes with this best value
+    legit_nodes = [node for node in sorted_nodes if sorting_key(node) == best_value]
+    # pick one of the nodes that are the best
+    return np.random.choice(legit_nodes)
