@@ -238,7 +238,8 @@ class CombineXYZ(Node):
     NUMERIC = [
         NumericInput("X", [-10, 10], 0, ParamType.FLOAT, True),
         NumericInput("Y", [-10, 10], 0, ParamType.FLOAT, True),
-        NumericInput("Z", [-10, 10], 0, ParamType.FLOAT, True),
+        # although there could be cases where z is relevant, when generating randomly it is more likely to create nonsense
+        # NumericInput("Z", [-10, 10], 0, ParamType.FLOAT, True),
     ]
     OUTPUTS = [Output(VECTOR, ParamType.VECTOR)]
 
@@ -366,7 +367,8 @@ class SeparateXYZ(Node):
     OUTPUTS = [
         Output("X", ParamType.FLOAT),
         Output("Y", ParamType.FLOAT),
-        Output("Z", ParamType.FLOAT),
+        # although there could be cases where z is relevant, when generating randomly it is more likely to create nonsense
+        # Output("Z", ParamType.FLOAT),
     ]
 
     def __init__(self, inputs, numeric, categorical, node_name):
@@ -429,7 +431,7 @@ class TexGradient(Node):
         Param(
             "gradient_type",
             ["LINEAR", "DIAGONAL", "SPHERICAL", "RADIAL"],
-            "LINEAR",
+            "RADIAL",
             ParamType.CATEGORICAL,
         )
     ]

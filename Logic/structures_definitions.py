@@ -168,7 +168,7 @@ combineXyz = MetaNode(
     [
         Con(IN, "comb", in_names=["X"]),
         Con(IN, "comb", in_names=["Y"]),
-        Con(IN, "comb", in_names=["Z"]),
+        # Con(IN, "comb", in_names=["Z"]),
         Con("comb", OUT),
     ],
     required_input_type=InOutType.FLOAT,
@@ -299,13 +299,41 @@ mega_structure2 = MetaNode(
     required_output_type=InOutType.COLOR,
 )
 
+mega_structure3 = MetaNode(
+    "mega_structure3",
+    {
+        "mapping": SubMetaNode(NODE_LIST_mapping, allowed_params={"Location": (0, 0), "Scale": (1, 1)}),
+        "gradient1": SubMetaNode(NODE_LIST_gradient),
+        "gradient2": SubMetaNode(NODE_LIST_gradient),
+        "tex1": SubMetaNode(NODE_LIST_textures),
+        "tex2": SubMetaNode(NODE_LIST_textures),
+        "mix3": SubMetaNode(NODE_LIST_mix_vector),
+        "burn": SubMetaNode(NODE_LIST_mix_vector, allowed_params={"blend_type": ("BURN",), "B": (0, 0)}),
+        "dodge": SubMetaNode(NODE_LIST_mix_vector, allowed_params={"blend_type": ("DODGE",), "B": (1, 1)}),
+    },
+    [
+        Con(IN, "mapping", in_names=[VECTOR]),
+        Con("mapping", "gradient1"),
+        Con("mapping", "gradient2"),
+        Con("gradient1", "tex1"),
+        Con("gradient2", "tex2"),
+        Con("tex1", "mix3", in_names=["A"]),
+        Con("tex2", "mix3", in_names=["B"]),
+        Con("mix3", "burn", in_names=["A"]),
+        Con("burn", "dodge", in_names=["A"]),
+        Con("dodge", OUT)
+    ],
+    output_type=InOutType.COLOR,
+    input_type=InOutType.VECTOR_OR_COLOR,
+    required_output_type=InOutType.COLOR,
+)
 
 ALL_META_NODES = [
     mix_textures,
     math_on_x_y_separately,
     tex_on_x_y_separately_then_math,
     tex_on_x_y_separately_then_combine,
-    burn_dodge,
+    # burn_dodge,
     combine_textures,
     duplicate_texture_to_two_textures_then_mix,
     texture_and_mix_with_self,
@@ -315,7 +343,7 @@ ALL_META_NODES = [
     tex_on_frac_on_scale,
 ]
 
-MEGA_STRUCTURES = [mega_structure1, mega_structure2]
+MEGA_STRUCTURES = [mega_structure1, mega_structure2, mega_structure3]
 
 if __name__ == "__main__":
     manager = MetaNetworkManager(MEGA_STRUCTURES, max_layers=2, n_additions=2)

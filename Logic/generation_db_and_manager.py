@@ -45,6 +45,7 @@ class DBManager:
         self.network = nx.DiGraph()
         self.network_managers: Dict[str, NetworkManager] = {}
         self.cluster_starts = set()
+        self.max_id = 0
         self.folder = folder
 
     def _add_node(self, node_id, network_manager: NetworkManager, labels_set=None):
@@ -115,6 +116,7 @@ class DBManager:
         # and also sometimes we "add edge" from input to a node that already has that edge
         if contract:
             # group to identical groups of nodes
+            # TODO: the labels of the contracted node are only the labels of the main one, not sure if that's ok
             node_groups = self.group_identical(added_nodes)
             for group in node_groups:
                 if len(group) > 1:
@@ -123,6 +125,8 @@ class DBManager:
                     for node in group[1:]:
                         # add the others connections to the main node, and delete from network managers
                         self.network = nx.contracted_nodes(self.network, main_node, node, self_loops=False)
+                        # as default it adds data from the node to the main one under "contraction", we don't want it
+                        del self.network.nodes[main_node]["contraction"]
                         del self.network_managers[node]
         return added_nodes
 
@@ -189,7 +193,7 @@ class DBManager:
             nodes_data.append(node_data)
         network["nodes"] = nodes_data
         network["edges"] = deep_unfreeze(network["edges"])
-        network_data = {"network": network, "cluster_starts": list(self.cluster_starts)}
+        network_data = {"network": network, "cluster_starts": list(self.cluster_starts), "max_id": self.max_id}
         with open(network_file, "w") as f:
             json.dump(network_data, f)
         with open(managers_file, "w") as f:
@@ -205,6 +209,7 @@ class DBManager:
         with open(os.path.join(folder, network_file), "r") as f:
             network_data = json.load(f)
         db_manager.cluster_starts = set(network_data["cluster_starts"])
+        db_manager.max_id = network_data["max_id"]
         network = nx.node_link_graph(network_data["network"], edges="edges")
         for _, node_data in network.nodes(data=True):
             # convert back from list to set (saved as list for json)
@@ -219,9 +224,8 @@ class DBManager:
 
     def _generate_unique_id(self):
         """Generate a unique ID for a new node."""
-        existing_names = set(int(name) for name in self.network.nodes)
-        new_name = max(existing_names) + 1 if existing_names else 0
-        return str(new_name)
+        self.max_id += 1
+        return str(self.max_id)
 
     @staticmethod
     def _apply_variation(network_manager: NetworkManager, variation: VariationDescriptor):
@@ -232,6 +236,7 @@ class DBManager:
 
     def generate_images(self, images_path, override_images=False):
         empty_count = 0
+        failed = []
         images_to_generate = self.get_nodes_without_label(HAS_IMAGE)
         now = time.time()
         for i, node_id in enumerate(images_to_generate):
@@ -241,17 +246,22 @@ class DBManager:
             img_path = os.path.join(images_path, f"{node_id}.png")
             if not override_images:
                 assert not os.path.exists(img_path), "Image already exists!"
-            generate_image(nm, img_path)
-            assert os.path.exists(img_path)
-            self.add_node_label(node_id, HAS_IMAGE)
-            is_empty = bool(is_empty_image(img_path))  # bool to convert from np.bool_
-            if is_empty:
-                self.add_node_label(node_id, IS_EMPTY_IMAGE)
-                empty_count += 1
+            try:
+                generate_image(nm, img_path)
+                assert os.path.exists(img_path)
+                self.add_node_label(node_id, HAS_IMAGE)
+                is_empty = bool(is_empty_image(img_path))  # bool to convert from np.bool_
+                if is_empty:
+                    self.add_node_label(node_id, IS_EMPTY_IMAGE)
+                    empty_count += 1
+            except Exception as e:
+                failed.append((node_id, e))
         time_required = time.time() - now
         print(
-            f"Generated {len(images_to_generate)} images, including {empty_count} empty images, in {round(time_required, 2)} seconds"
+            f"Generated {len(images_to_generate)} images, including {empty_count} empty images, "
+            f"in {round(time_required, 2)} seconds, failed on: {len(failed)}"
         )
+        return failed
 
     def connect_new_node_to_existing_connections(
         self, new_node_id, main_node_id, new_connection: TwoWayVariationDescriptor
@@ -274,12 +284,15 @@ class DBManager:
             edge for edge in edges if edge[2]["variation_type"] == variation_type.name and edge[1] != new_node_id
         ]
         # for each of these edges:
+        new_connections_count = 0
         for _, side_connection_id, step_data in edges_to_connect:
             from_main_node_to_side_node = VariationDescriptor(
                 VariationType[step_data["variation_type"]], step=step_data["step"]
             )
             # get the data of the backwards step - from the side node to the main
             backwards_data = self.network.get_edge_data(side_connection_id, main_node_id)
+            if backwards_data is None:  # if no backwards connection was created
+                continue
             from_side_node_to_main_node = VariationDescriptor(
                 VariationType[backwards_data["variation_type"]], step=backwards_data["step"]
             )
@@ -288,6 +301,9 @@ class DBManager:
             from_side_to_new = add_two_variations(from_side_node_to_main_node, step_forward)
             connection = TwoWayVariationDescriptor(steps_forward=[from_new_to_side], steps_backward=[from_side_to_new])
             self.connect_existing_nodes(new_node_id, side_connection_id, connection)
+            new_connections_count += 1
+        if new_connections_count > 0:
+            print(f"Created {new_connections_count} new connections between existing nodes")
 
 
 def change_seed(nm, n_changes=5):
@@ -302,30 +318,30 @@ def change_params(nm, n_changes=3):
     return non_structural_changes(nm, n_changes, ParamRequestType.NON_SEED)
 
 
-def completely_random_generation(n_additions=6, **kwargs):
+def completely_random_generation(n_additions=6, n_change_params=5, **kwargs):
     nm = NetworkManager()
     nm.initialize_network()
     nm.generate_random_network(n_additions=n_additions)
     nm.finish_network()
-    params_change = change_params(nm, n_changes=15)
+    params_change = change_params(nm, n_changes=n_change_params)
     apply_variation(nm, params_change.steps_forward[0])
     return nm
 
 
-def regular_meta_nodes(max_layers=2, n_additions=3):
+def regular_meta_nodes(max_layers=2, n_additions=3, n_change_params=5):
     manager = MetaNetworkManager(ALL_META_NODES, max_layers=max_layers, n_additions=n_additions)
     manager.generate_network()
     nm = manager.meta_network_to_flat_network()
-    params_change = change_params(nm, n_changes=15)
+    params_change = change_params(nm, n_changes=n_change_params)
     apply_variation(nm, params_change.steps_forward[0])
     return nm
 
 
-def mega_nodes(max_layers=1, n_additions=1):
+def mega_nodes(max_layers=1, n_additions=1, n_change_params=5):
     manager = MetaNetworkManager(MEGA_STRUCTURES, max_layers=max_layers, n_additions=n_additions)
     manager.generate_network()
     nm = manager.meta_network_to_flat_network()
-    params_change = change_params(nm, n_changes=15)
+    params_change = change_params(nm, n_changes=n_change_params)
     apply_variation(nm, params_change.steps_forward[0])
     return nm
 
@@ -339,20 +355,39 @@ def make_cluster_base(make_initial_func, kwargs):
     return cluster_base  # return an empty one if somehow it didn't work after 10 attempts
 
 
-def make_clusters(db_manager, n_clusters=5, cluster_func=regular_meta_nodes, cluster_kwargs=None):
+def make_cluster(db_manager: DBManager, cluster_func=regular_meta_nodes, concat_param_change=True, cluster_kwargs=None):
     if cluster_kwargs is None:
         cluster_kwargs = {}
-    cluster_ids = []
-    for _ in range(n_clusters):
-        generation_label = base_func_type_label[cluster_func]
-        cluster_base = make_cluster_base(cluster_func, cluster_kwargs)
-        new_cluster_id = db_manager.add_cluster(cluster_base, labels_set=frozenset({generation_label}))
-        empty_network_variation = to_nothing_variation(cluster_base)
-        new_nodes = db_manager.add_sequence(
-            new_cluster_id, empty_network_variation, node_labels=frozenset({ON_PATH_TO_EMPTY})
+    generation_label = base_func_type_label[cluster_func]
+    cluster_base = make_cluster_base(cluster_func, cluster_kwargs)
+    new_cluster_id = db_manager.add_cluster(cluster_base, labels_set=frozenset({generation_label}))
+    empty_network_variation = to_nothing_variation(cluster_base, concat_param_change=concat_param_change)
+    new_nodes = db_manager.add_sequence(
+        new_cluster_id, empty_network_variation, node_labels=frozenset({ON_PATH_TO_EMPTY}), contract=True
+    )
+    return new_nodes
+
+
+def make_variations(db_manager: DBManager, selected_node, variation_func):
+    network_node = db_manager.network_managers[selected_node]
+    two_way_variations: TwoWayVariationDescriptor = variation_func(network_node)
+
+    if two_way_variations is None or len(two_way_variations.steps_forward[0].step) == 0:
+        print(
+            f"Attempted to create variation: {variation_func.__name__} on {selected_node} but no variation was created"
         )
-        cluster_ids.append(cluster_base)
-    return cluster_ids
+        return
+
+    new_nodes = db_manager.add_sequence(selected_node, two_way_variations)
+
+    # connect to other nodes that are connected to the same node
+    non_structural_variation_types = [VariationType.SEED, VariationType.NUMERIC, VariationType.CAT_AND_NUMERIC]
+    if (
+        len(two_way_variations.steps_backward) == 1
+        and two_way_variations.steps_backward[0].variation_type in non_structural_variation_types
+    ):
+        assert len(new_nodes) == 1, "If steps backwards is 1 there should only have been one new node"
+        db_manager.connect_new_node_to_existing_connections(new_nodes[0], selected_node, two_way_variations)
 
 
 base_func_type_label = {

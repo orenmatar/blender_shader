@@ -114,8 +114,8 @@ nodes_adder = NodesAdder(material.node_tree)
         Create a network manager from a dict
         """
         new_manager = NetworkManager()
-        new_manager.node_counts = manager_data["node_counts"]
-        new_manager.free_inputs = manager_data["free_inputs"]
+        new_manager.node_counts = defaultdict(int, manager_data["node_counts"])
+        new_manager.free_inputs = {k: set(v) for k, v in manager_data["free_inputs"].items()}
         new_manager.input_node_name = manager_data["in_node_name"]
         new_manager.output_node_name = manager_data["out_node_name"]
         new_manager.node_value_ranges_name = manager_data["node_value_ranges_name"]
@@ -164,7 +164,7 @@ nodes_adder = NodesAdder(material.node_tree)
         return differences
 
     @staticmethod
-    def compare_networks(network1, network2, compare_node_properties=True):
+    def compare_networks(network1, network2, compare_node_properties=True, tuple_list_hack=False):
         """
         Compare two networks, given their nodes and edges
         If compare_node_properties is False, only compare the node types, not the attribute values (i.e., doesn't matter
@@ -173,7 +173,20 @@ nodes_adder = NodesAdder(material.node_tree)
         nodes1, edges1 = network1.network_data_for_comparison()
         nodes2, edges2 = network2.network_data_for_comparison()
         if compare_node_properties:
-            return nodes1 == nodes2 and edges1 == edges2
+            if not tuple_list_hack:
+                return nodes1 == nodes2 and edges1 == edges2
+            # OMG i'm so sorry for this hack. Don't know why exactly but sometimes we can node attributes with the same
+            # values but one is a tuple and another is a list, so it returns False, as the networks are not equal.
+            # instead of fixing it - i'm checking here if that's the case, and they still have the same values - then we
+            # can still say the networks are equal.
+            if nodes1 != nodes2:
+                nodes_diffs = NetworkManager.find_nodes_differences(network1, network2)
+                for node_name, vals in nodes_diffs.items():
+                    for val_name, (val_1, val_2) in vals.items():
+                        if tuple(val_2) != tuple(val_1):  # if even cases as tuple they are not the same - then false
+                            return False
+            # if we didn't find any differences, then just check the edges
+            return edges1 == edges2
         node_types1 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes1}
         node_types2 = {NetworkManager.node_name_to_node_type_name(node) for node in nodes2}
         return node_types1 == node_types2 and edges1 == edges2

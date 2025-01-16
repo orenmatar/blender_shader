@@ -44,7 +44,7 @@ NODES_TO_SAMPLE_ADD = [
     # "CombineXYZ",
     # "Mapping",
     # "Math",
-    "MixFloat",
+    # "MixFloat",
     "MixVector",
     # "SeparateXYZ",
     "TexGabor",
@@ -52,6 +52,7 @@ NODES_TO_SAMPLE_ADD = [
     "TexNoise",
     "TexVoronoiF",
     "TexWave",
+    "TexVoronoiDistance",
     # "ValToRGB",
     # "VectorMath",
 ]
@@ -341,7 +342,7 @@ def create_remove_node_variation(nm: NetworkManager, node_to_remove: str) -> Two
     return TwoWayVariationDescriptor([forward], backwards_steps)
 
 
-def to_nothing_variation(nm: NetworkManager) -> TwoWayVariationDescriptor:
+def to_nothing_variation(nm: NetworkManager, concat_param_change=True) -> TwoWayVariationDescriptor:
     """
     Create a variation that removes all nodes from the network - and the opposite, from nothing to the whole network
     We have to create a copy and apply the variations at each steps to the copy - because the actual definition of the
@@ -365,12 +366,13 @@ def to_nothing_variation(nm: NetworkManager) -> TwoWayVariationDescriptor:
     for steps in reversed(process_backwards):
         steps_backwards.extend(steps)
 
-    # since each time we remove a node we create several backward steps - for adding it and then changing the params back
-    # we create lots of param changes, when really they can all be combined into one step. so we combine them here.
-    structural = [x for x in steps_backwards if x.variation_type != VariationType.CAT_AND_NUMERIC]
-    non_structural = [x for x in steps_backwards if x.variation_type == VariationType.CAT_AND_NUMERIC]
-    # if len(non_structural) >= 2:
-    #     steps_backwards = structural+ [add_several_variations(non_structural)]
+    if concat_param_change:
+        # since each time we remove a node we create several backward steps - for adding it and then changing the params back
+        # we create lots of param changes, when really they can all be combined into one step. so we combine them here.
+        structural = [x for x in steps_backwards if x.variation_type != VariationType.CAT_AND_NUMERIC]
+        non_structural = [x for x in steps_backwards if x.variation_type == VariationType.CAT_AND_NUMERIC]
+        if len(non_structural) >= 2:
+            steps_backwards = structural+ [add_several_variations(non_structural)]
     return TwoWayVariationDescriptor(steps_forwards, steps_backwards)
 
 
