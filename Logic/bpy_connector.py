@@ -134,3 +134,4 @@ def generate_image(nm, image_path):
     nodes_adder = NodesAdder(material.node_tree)
     exec(code)
     bpy.ops.render.render(write_still=True)
+

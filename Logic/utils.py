@@ -3,13 +3,12 @@ import math
 from types import MappingProxyType
 from typing import Any
 
+from IPython.core.display_functions import clear_output
 from PIL import Image
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-
-from Logic.bpy_connector import generate_image
 
 
 def sample_uniform(low=0, high=10, size=1):
@@ -126,6 +125,12 @@ def is_empty_image(image_path):
     return img_array.std() < 1
 
 
-def check_nm_not_empty(nm):
-    generate_image(nm, "/tmp/tmp.png")
-    return is_empty_image("/tmp/tmp.png")
+def lc(iterable, print_every=1, clear=True):
+    for index, item in enumerate(iterable, start=1):
+        if index % print_every == 0:
+            if clear:
+                clear_output(wait=True)
+            print(f"{index}/{len(iterable)}")
+        yield item
+
+

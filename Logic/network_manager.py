@@ -3,12 +3,13 @@ import json
 from collections import defaultdict
 from typing import Tuple
 
+from Logic.bpy_connector import generate_image
 from Logic.node_readers_writers import *
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from Logic.utils import sample_uniform
+from Logic.utils import sample_uniform, is_empty_image
 
 
 class NetworkManager(object):
@@ -504,6 +505,11 @@ nodes_adder = NodesAdder(material.node_tree)
         if with_initialization_code:
             code = self.INITIALIZATION_CODE + code
         return code
+
+
+def check_nm_not_empty(nm):
+    generate_image(nm, "/tmp/tmp.png")
+    return is_empty_image("/tmp/tmp.png")
 
 
 if __name__ == "__main__":

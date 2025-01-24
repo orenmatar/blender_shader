@@ -91,11 +91,12 @@ def param_request_type_to_variation_type(param_request_type: ParamRequestType) -
 
 
 def non_structural_changes(
-    nm: NetworkManager, max_to_change: int, change_types: ParamRequestType
-) -> TwoWayVariationDescriptor:
+    nm: NetworkManager, max_to_change: int, change_types: ParamRequestType, param_names = None,
+) -> Optional[TwoWayVariationDescriptor]:
     """
     Make a change to the network that is not structural - i.e. changing seeds, categorical or numeric values
     Sorry about the mess - it was a long day, it should be easy to simplify the first half of this function
+    if param_names is supplied - we will only make changes to params with those names (e.g. only change "Scale")
     """
     # get distributions for all the nodes and parameters that can be changed
     dist_vals = nm.get_all_nodes_values(change_types, return_ranges=True, not_input_values=True)
@@ -132,8 +133,12 @@ def non_structural_changes(
                 if len(dist) > 0:
                     change_options.append((node, param_name))
 
+    if param_names is not None:
+        change_options = [(node_id, input_name) for node_id, input_name in change_options if input_name in param_names]
     # finally, we have a list of params that can be changed, and we pick a random number of them to change
     n_changes = min(max_to_change, len(change_options))
+    if n_changes == 0:
+        return
     to_change_idx = np.random.choice(range(len(change_options)), n_changes, replace=False)
     to_change = [change_options[i] for i in to_change_idx]
     selection_dist = defaultdict(dict)  # a dict of options to select from, from the params we decided to change
@@ -159,7 +164,7 @@ def add_random_node_on_edge(nm: NetworkManager) -> TwoWayVariationDescriptor:
     node_type = nm.NODE_TYPES[new_node_type_name]
     new_node_out = node_type.get_random_output()
     new_node_in = node_type.get_random_input()
-    new_node_name = new_node_type_name + f"_{str(uuid4())}"  # create a unique name for the new node
+    new_node_name = f"{new_node_type_name}_{str(uuid4())}".replace("-", "_")  # create a unique name for the new node
 
     step = {
         "edge": edge,

@@ -10,10 +10,10 @@ from IPython.core.display_functions import clear_output
 
 from Logic.bpy_connector import generate_image
 from Logic.meta_network import MetaNetworkManager
-from Logic.network_manager import NetworkManager
+from Logic.network_manager import NetworkManager, check_nm_not_empty
 from Logic.node_readers_writers import ParamRequestType
 from Logic.structures_definitions import ALL_META_NODES, MEGA_STRUCTURES
-from Logic.utils import deep_unfreeze, deep_freeze, check_nm_not_empty, is_empty_image
+from Logic.utils import deep_unfreeze, deep_freeze, is_empty_image
 from Logic.variations_creator import (
     TwoWayVariationDescriptor,
     apply_variation,
@@ -150,6 +150,15 @@ class DBManager:
                 nodes.add(u)
         return list(nodes)
 
+    def delete_nodes(self, nodes, images_path=None):
+        for node in nodes:
+            del self.network_managers[node]
+            self.network.remove_node(node)
+            if images_path:
+                img_path = self.make_image_path(node, images_path)
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+
     def draw_network(self):
         """Draw the network."""
         pos = nx.spring_layout(self.network)
@@ -234,16 +243,20 @@ class DBManager:
         apply_variation(new_network_manager, variation)
         return new_network_manager
 
-    def generate_images(self, images_path, override_images=False):
+    @staticmethod
+    def make_image_path(node_id, images_path):
+        return os.path.join(images_path, f"{node_id}.png")
+
+    def generate_images(self, images_path, override_images=False, save_every=None):
         empty_count = 0
         failed = []
         images_to_generate = self.get_nodes_without_label(HAS_IMAGE)
         now = time.time()
-        for i, node_id in enumerate(images_to_generate):
+        for i, node_id in enumerate(images_to_generate, start=1):
             clear_output(wait=True)
             print(f"working on image {i}/{len(images_to_generate)}")
             nm = self.network_managers[node_id]
-            img_path = os.path.join(images_path, f"{node_id}.png")
+            img_path = self.make_image_path(node_id, images_path)
             if not override_images:
                 assert not os.path.exists(img_path), "Image already exists!"
             try:
@@ -255,7 +268,11 @@ class DBManager:
                     self.add_node_label(node_id, IS_EMPTY_IMAGE)
                     empty_count += 1
             except Exception as e:
+                print('Failed!')
                 failed.append((node_id, e))
+            if save_every is not None and i % save_every == 0:
+                print('Saving...')
+                self.save()
         time_required = time.time() - now
         print(
             f"Generated {len(images_to_generate)} images, including {empty_count} empty images, "
@@ -302,20 +319,20 @@ class DBManager:
             connection = TwoWayVariationDescriptor(steps_forward=[from_new_to_side], steps_backward=[from_side_to_new])
             self.connect_existing_nodes(new_node_id, side_connection_id, connection)
             new_connections_count += 1
-        if new_connections_count > 0:
-            print(f"Created {new_connections_count} new connections between existing nodes")
+        # if new_connections_count > 0:
+        #     print(f"Created {new_connections_count} new connections between existing nodes")
 
 
-def change_seed(nm, n_changes=5):
-    return non_structural_changes(nm, n_changes, ParamRequestType.SEED)
+def change_seed(nm, n_changes=5, **kwargs):
+    return non_structural_changes(nm, n_changes, ParamRequestType.SEED, **kwargs)
 
 
-def change_numeric(nm, n_changes=4):
-    return non_structural_changes(nm, n_changes, ParamRequestType.NUMERIC)
+def change_numeric(nm, n_changes=4, **kwargs):
+    return non_structural_changes(nm, n_changes, ParamRequestType.NUMERIC, **kwargs)
 
 
-def change_params(nm, n_changes=3):
-    return non_structural_changes(nm, n_changes, ParamRequestType.NON_SEED)
+def change_params(nm, n_changes=3, **kwargs):
+    return non_structural_changes(nm, n_changes, ParamRequestType.NON_SEED, **kwargs)
 
 
 def completely_random_generation(n_additions=6, n_change_params=5, **kwargs):
@@ -368,15 +385,13 @@ def make_cluster(db_manager: DBManager, cluster_func=regular_meta_nodes, concat_
     return new_nodes
 
 
-def make_variations(db_manager: DBManager, selected_node, variation_func):
-    network_node = db_manager.network_managers[selected_node]
-    two_way_variations: TwoWayVariationDescriptor = variation_func(network_node)
+def make_variations(db_manager: DBManager, selected_node, variation_func, **kwargs):
+    nm = db_manager.network_managers[selected_node]
+    two_way_variations: TwoWayVariationDescriptor = variation_func(nm, **kwargs)
 
     if two_way_variations is None or len(two_way_variations.steps_forward[0].step) == 0:
-        print(
-            f"Attempted to create variation: {variation_func.__name__} on {selected_node} but no variation was created"
-        )
-        return
+        fail_msg = f"Attempted to create variation: {variation_func.__name__} on {selected_node} but no variation was created"
+        return fail_msg
 
     new_nodes = db_manager.add_sequence(selected_node, two_way_variations)
 
