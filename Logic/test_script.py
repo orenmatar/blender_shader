@@ -41,7 +41,8 @@ def train(
 ):
     auc_log_perc = 0.3
     loss_log_perc = 0.01
-    logging.info(f"Starting a new run. {batch_size}, {num_epochs}")
+    logging.info(f"logging Starting a new run. {batch_size}, {num_epochs}")
+    print(f"printing Starting a new run. {batch_size}, {num_epochs}")
 
     file_path = os.path.join(datasets_path, "texture_cls_pairs.json")
     with open(file_path, "rb") as json_file:
