@@ -1,14 +1,21 @@
+import re
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models, transforms
 
+from Logic.nn_models_utils import count_parameters
 
-def make_siamese_vgg(layers_to_take_and_size, final_emb=128, use_avg_pool=False):
+
+def make_siamese_vgg(layers_to_take_and_size, final_emb=128, use_avg_pool=False, with_weights=True):
     # Load pretrained VGG16
     layers, size = layers_to_take_and_size
-    vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
+    if with_weights:
+        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
+    else:
+        vgg = models.vgg16(weights=None)
 
     original_weight = vgg.features[0].weight.data
     # Sum the weights across the 3 channels to create a 1-channel equivalent
@@ -40,9 +47,12 @@ def make_siamese_vgg(layers_to_take_and_size, final_emb=128, use_avg_pool=False)
     return model
 
 
-def make_siamese_resnet(layers_to_take_and_size, final_emb=128, use_avg_pool=False):
+def make_siamese_resnet(layers_to_take_and_size, final_emb=128, use_avg_pool=False, with_weights=True):
     layers, size = layers_to_take_and_size
-    resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)  # Load pretrained ResNet
+    if with_weights:
+        resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    else:
+        resnet = models.resnet18(weights=None)
 
     # Modify first conv layer for grayscale (1-channel input)
     original_weight = resnet.conv1.weight.data
@@ -128,4 +138,15 @@ def make_siamese_dists(final_emb=128):
         nn.Linear(2048, final_emb)  # Final embedding layer (512 channels from VGG)
     )
 
+    return model
+
+def load_resent_model(model_path):
+    layer_size = tuple((int(x) for x in re.findall('la_(.....)', model_path)[0].split('_')))
+    model = make_siamese_resnet(layers_to_take_and_size=layer_size, final_emb=128, use_avg_pool=False)
+    checkpoint = torch.load(model_path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"), weights_only=True)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(f'Params: {count_parameters(model)}')
     return model

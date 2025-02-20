@@ -14,7 +14,7 @@ from PIL import Image
 
 
 class SiameseDataset(Dataset):
-    def __init__(self, data_pairs, images_folder, resize=True):
+    def __init__(self, data_pairs, images_folder, resize=True, with_names=False):
         """
         Args:
             data_pairs (list of tuples): Each tuple is (image1_path, image2_path, label).
@@ -31,7 +31,7 @@ class SiameseDataset(Dataset):
             ]
         )
         self.transform_grayscale = transforms.Compose(transformations)
-
+        self.with_names = with_names
         self.data_pairs = data_pairs
         self.images_folder = images_folder
 
@@ -46,14 +46,16 @@ class SiameseDataset(Dataset):
         img1_path, img2_path, label, attribute = self.data_pairs[idx]
         img1 = self.load_image(img1_path)
         img2 = self.load_image(img2_path)
-        return img1, img2, torch.tensor(label, dtype=torch.float32), attribute
+        if not self.with_names:
+            return img1, img2, torch.tensor(label, dtype=torch.float32), attribute
+        return img1, img2, torch.tensor(label, dtype=torch.float32), attribute, (img1_path, img2_path)
 
     def __len__(self):
         return len(self.data_pairs)
 
 
 # Function to split dataset and create dataloaders
-def create_dataloaders(image_pairs, images_path, test_size=0.2, batch_size=32, num_workers=4, persistent_workers=True, resize=True):
+def create_dataloaders(image_pairs, images_path, test_size=0.2, batch_size=32, num_workers=4, persistent_workers=True, **kwargs):
     """
     Splits the dataset into train and test and creates DataLoader instances.
     """
@@ -61,8 +63,8 @@ def create_dataloaders(image_pairs, images_path, test_size=0.2, batch_size=32, n
         image_pairs, test_size=test_size, stratify=[attribute for _, _, label, attribute in image_pairs]
     )
 
-    train_dataset = SiameseDataset(train_data, images_path, resize=resize)
-    test_dataset = SiameseDataset(test_data, images_path, resize=resize)
+    train_dataset = SiameseDataset(train_data, images_path, **kwargs)
+    test_dataset = SiameseDataset(test_data, images_path, **kwargs)
 
     train_loader = DataLoader(
         train_dataset,
