@@ -1,0 +1,655 @@
+from collections import defaultdict
+
+import numpy as np
+
+from Logic.constants import (
+    VECTOR_VALUES_CLOSE,
+    VECTOR_VALUES_SEP,
+    NODE_CLOSE,
+    PARAMETERS_SEP,
+    NAME_VALUE_SEP,
+    VECTOR_VALUES_OPEN,
+    NODE_OPEN,
+    FROM_TO,
+    EDGES_START,
+    NODES_EDGES_SEP,
+    NO_ACTION_ID,
+    MAIN_HEAD_LABEL_TO_ID_MAP,
+    SECONDARY_HEAD_LABEL_TO_ID_MAP,
+    DECREASE,
+    INCREASE,
+    NO_ACTION_LABEL,
+    VECTOR,
+)
+from Logic.blender_tree_manager import BlenderTreeManager
+from Logic.variations_creator import VariationType, create_remove_node_variation, VariationDescriptor
+
+"""
+The purpose of this module is to take an edge from a note in the network to another - i.e. a change in a blender tree -
+and convert it to labels to be used by a BERT style model - so each token gets it's label for correction
+the way I wrote the label maker for BERT assumes working with my tokenizer.
+would be better to: only use the separators that I have for my language, not assuming anything about the length
+of the node name when it is tokenized (could be several tokens), or about the edges tokenized etc.
+every element has start and end idx, and we just need to find them and then put the label on one of them.
+token_labels_to_variation_steps
+edge_to_example
+"""
+
+OUT_NAME_MAPPING = {
+    "Color": "out",
+    "Distance": "out",
+    "Result": "out",
+    "Value": "out",
+    "Vector": "out",
+    "X": "X",
+    "Y": "Y",
+}
+
+INPUT_NAME_MAPPING_TO_CANONICAL = {
+    "CombineXYZ": {"X": "X", "Y": "Y"},
+    "Mapping": {"Vector": "Vector", "Location": "Location", "Scale": "Scale"},
+    "Math": {"value_0": "X", "value_1": "Y"},
+    "MixFloat": {"Factor": "Vector", "A": "X", "B": "Y"},
+    "MixVector": {"Factor": "Vector", "A": "X", "B": "Y"},
+    "SeparateXYZ": {"Vector": "Vector"},
+    "TexGabor": {"Vector": "Vector"},
+    "TexGradient": {"Vector": "Vector"},
+    "TexNoise": {"Vector": "Vector", "Scale": "Scale"},
+    "TexVoronoiF": {"Vector": "Vector"},
+    "TexVoronoiDistance": {"Vector": "Vector"},
+    "TexWave": {"Vector": "Vector", "Scale": "Scale"},
+    "ValToRGB": {"Fac": "Vector"},
+    "VectorMath": {"vector_0": "X", "vector_1": "Y"},
+    "OutputNode": {"Color": "Vector"},
+}
+
+CANONICAL_MAPPING_TO_INPUT_NAME_MAPPING = defaultdict(dict)
+for node_name, inputs in INPUT_NAME_MAPPING_TO_CANONICAL.items():
+    if len(inputs) > 0:
+        for input_name, canonical in inputs.items():
+            CANONICAL_MAPPING_TO_INPUT_NAME_MAPPING[node_name][canonical] = input_name
+CANONICAL_MAPPING_TO_INPUT_NAME_MAPPING = dict(CANONICAL_MAPPING_TO_INPUT_NAME_MAPPING)
+
+NUMBER_END_TOKENS = [token.strip() for token in [NODE_CLOSE, VECTOR_VALUES_CLOSE, PARAMETERS_SEP]]
+NUMBER_SEP_TOKENS = [VECTOR_VALUES_SEP.strip()] + NUMBER_END_TOKENS
+NUMBER_START_TOKENS = [
+    token.strip() for token in [VECTOR_VALUES_OPEN, NAME_VALUE_SEP, PARAMETERS_SEP, VECTOR_VALUES_SEP]
+]
+VECTOR_VALUES_OPEN_stripped = VECTOR_VALUES_OPEN.strip()
+VECTOR_VALUES_SEP_stripped = VECTOR_VALUES_SEP.strip()
+VECTOR_VALUES_CLOSE_stripped = VECTOR_VALUES_CLOSE.strip()
+FROM_TO_stripped = FROM_TO.strip()
+EDGES_START_stripped = EDGES_START.strip()
+NODE_CLOSE_stripped = NODE_CLOSE.strip()
+NODE_OPEN_stripped = NODE_OPEN.strip()
+NAME_VALUE_SEP_stripped = NAME_VALUE_SEP.strip()
+NODES_EDGES_SEP_stripped = NODES_EDGES_SEP.strip()
+
+
+def token_labels_to_variation_steps(
+    code: str,
+    tokens: list[str],
+    labels: list[str],
+    confidence_values=None,
+    numeric_params=True,
+    ensure_correct_syntax_labels=False,
+    protected_conversion=False,
+) -> list[VariationDescriptor]:
+    """
+    Converts a list of labels to a list of the variations they describe
+    This is the connector between the BERT model output and the variations creator that makes the actual changes to the
+    BlenderTreeManager. I.e. converting the labels that the model outputs for every token, to our class of VariationDescriptor
+    that can be used to create the actual variations on the BlenderTreeManager.
+    The complexity here is because some variations span several tokens (like vector values, or add edge which has
+    two labels but is one operation), so we need to group those first before converting to variations.
+    There is also a lot of parsing to find the right node and attribute to change based on the token index.
+    :param code: the str of a Blender Tree Manager
+    :param tokens: str tokens of the code
+    :param labels: the labels the model generated for each token
+    :param confidence_values an array of how confident the model is in each label
+    :param numeric_params if True it expects the labels to have the numeric value to change to. if False, expects a simple
+    "INCREASE" or "DECREASE" for each numeric value
+    :param ensure_correct_syntax_labels if True, makes sure the labels are consistent with the syntax, e.g. that Vector values come in triplets.
+    This is useful for when the labels were generated by a model
+    :param protected_conversion if True, wrap conversion with try except so errors in the operations won't result in exception
+    :return:
+    """
+    if confidence_values is None:
+        confidence_values = [0] * len(labels)
+    assert len(confidence_values) == len(labels)
+    assert len(tokens) == len(labels)
+    tokens = [token.strip() for token in tokens]
+    # finds all labels with an operation
+    if ensure_correct_syntax_labels:
+        _fix_labels_vectors(tokens, labels, confidence_values)
+    operations = [
+        (i, operation, confidence_values[i]) for i, operation in enumerate(labels) if operation != NO_ACTION_LABEL
+    ]
+    # group the vector and add edge operations, which have separate labels but are really one entity
+    operations = _group_operations(operations)
+    nm = BlenderTreeManager.from_str(code)
+    variations = []
+    for idx, operation, probability in operations:
+        if protected_conversion:
+            try:
+                variations.append(
+                    _operation_to_variation(idx, operation, probability, nm, tokens, numeric_params=numeric_params)
+                )
+            except:
+                pass
+        else:
+            variations.append(
+                _operation_to_variation(idx, operation, probability, nm, tokens, numeric_params=numeric_params)
+            )
+    variations = _group_variations(variations)
+    variations = [
+        VariationDescriptor(VariationType[variation["variation_type"]], variation["step"], prob)
+        for variation, prob in variations
+    ]
+    return variations
+
+def edge_to_example(edge, code: str, tokenizer, numbers_mode=False):
+    """
+    Converts an edge (a variation on a BlenderTreeManager) to a dict of input_ids, attention_mask, main_head_ids,
+    This is used to create training examples for a BERT style model, from a network of trees that was generated
+    by MCTS.
+    """
+    tokenized = tokenizer(code)
+    input_ids = tokenized["input_ids"]
+    attention_mask = tokenized["attention_mask"]
+    if edge is None:  # not a reference on an edge, just a single node to self:
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "main_head_ids": [NO_ACTION_ID] * len(input_ids),
+            "secondary_head_ids": [NO_ACTION_ID] * len(input_ids),
+        }
+    tokens = tokenizer.convert_ids_to_tokens(input_ids)
+    labels = _edge_to_token_labels(tokens, edge, numbers_mode=numbers_mode, ignore_error=True)
+    main_head_labels, secondary_head_labels = zip(*[x.split("__", 1) for x in labels])
+    main_head_ids = [MAIN_HEAD_LABEL_TO_ID_MAP[x] for x in main_head_labels]
+    try:  # some very rare nodes we didn't make so we skip those
+        secondary_head_ids = [SECONDARY_HEAD_LABEL_TO_ID_MAP[x] for x in secondary_head_labels]
+    except KeyError:
+        return None
+    assert len(input_ids) == len(main_head_labels) == len(attention_mask)
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "main_head_ids": main_head_ids,
+        "secondary_head_ids": secondary_head_ids,
+    }
+
+
+def _find_edge_index_in_tokens(tokens, node_before, node_after, in_name, out_name) -> int:
+    """finds the index of the -> token between two nodes"""
+    indices = []
+    for i, token in enumerate(tokens):
+        if token == FROM_TO_stripped:  # find any ->
+            # connect the tokens to recreate the node names and compare to the one's we're looking for
+            node_from = "".join(tokens[i - 4 : i - 2])
+            node_to = "".join(tokens[i + 3 : i + 5])
+            out_socket, in_socket = tokens[i - 1], tokens[i + 1]
+            # check the nodes names around it match
+            if node_from == node_before and node_to == node_after and in_name == in_socket and out_name == out_socket:
+                indices.append(i)
+    assert len(indices) == 1
+    return indices[0]
+
+
+def _find_edges_token(tokens):
+    """finds the EDGES: token, where the edges section starts"""
+    index = 0
+    for i, token in enumerate(tokens):
+        if token == EDGES_START_stripped:
+            index = i
+            break
+    assert index != 0
+    return index
+
+
+def _find_node_in_nodes_section_by_name(tokens, node_name):
+    """finds a node by name"""
+    node_type = BlenderTreeManager.node_name_to_node_type_name(node_name)
+    edges_token = _find_edges_token(tokens)
+    index = 0
+    for i, token in enumerate(tokens):
+        if token == node_type:  # finds that node type and for each - makes the name and checks it matches
+            if "".join(tokens[i : i + 2]) == node_name:
+                index = i
+                break
+    assert index != 0
+    assert index < edges_token  # make sure we found it in the nodes section
+    return index
+
+
+def _get_node_attribute_index(tokens, node_name, node_attribute):
+    """finds the index of a node attribute"""
+    # TODO: list.index(idx) maybe faster, maybe slice the tokens by the nodes idx and find it then
+    idx = _find_node_in_nodes_section_by_name(tokens, node_name)  # finds node idx
+    while True:
+        idx += 1
+        token = tokens[idx]
+        if token == node_attribute:  # assumes node attribute has one token...
+            break
+        if token == NODE_CLOSE_stripped:
+            raise ValueError(f"Did not find the attribute {node_attribute} for {node_name}")
+    return idx
+
+
+def _get_numerical_operation(current_value, new_value, variation_type, numbers_mode=False):
+    if numbers_mode:
+        return f"{variation_type}__{new_value}"
+    if current_value > new_value:
+        return f"{variation_type}__{DECREASE}"
+    if current_value < new_value:
+        return f"{variation_type}__{INCREASE}"
+    return f"{variation_type}__{NO_ACTION_LABEL}"
+
+
+def _find_numbers_indices(tokens, attr_idx):
+    """
+    Finds the indices of the numbers of the vector starting in attr_idx
+    TODO: a better way to do this is find the index of the start and end [ ] or : , and index of separator | if it exists
+    (if it's a vector). take that range and split it by the indices of |. Works both for single numbers and vectors.
+    That would return all indices of the numbers, can then take start and end
+    """
+    number_indices = []
+    current_idx = attr_idx
+    current_num_start = current_idx
+    while current_idx < len(tokens):
+        current_idx += 1
+        token = tokens[current_idx]
+        if token in NUMBER_SEP_TOKENS:
+            # if we hit a separator, add a new idx with the current_num_start we had set, and the end - which is one back
+            number_indices.append((current_num_start, current_idx - 1))
+        if token in NUMBER_END_TOKENS:
+            break
+        if token in NUMBER_START_TOKENS:
+            current_num_start = current_idx + 1  # set the next num start - the idx after the separator
+    return number_indices
+
+
+def _get_labels_for_cat_numeric(tokens, step, numbers_mode=False, ignore_error=False):
+    """
+    Returns the labels for a cat-numeric variation step.
+    Gives each label one of the names: VECTOR, VariationType.NUMERIC, VariationType.CAT_AND_NUMERIC.
+    It helps to have different labels for each, for later analysis, but maybe the names can be different and not
+    half-overlap with VariationType.
+    """
+    idx_and_operations = []
+    for node_name, attributes in step.items():
+        for attr_name, attr_value in attributes.items():
+            if ignore_error:
+                # very very very rarely there is an edge labeled "CAT_AND_NUMERIC" but with a seed change in it,
+                # I'm not sure where it comes from, but I'm just ignoring it for now, just skip that part of the variation
+                try:
+                    attr_idx = _get_node_attribute_index(tokens, node_name, attr_name)
+                except ValueError:
+                    continue
+            else:
+                attr_idx = _get_node_attribute_index(tokens, node_name, attr_name)
+            if isinstance(attr_value, str):  # for categorical values just set the value
+                # cat value will be 2 tokens after the name. name : value
+                # operation name starts with cat and numeric for categorical - this will help parse it later
+                idx_and_operations.append((attr_idx + 2, f"{VariationType.CAT_AND_NUMERIC.name}__{attr_value}"))
+            elif isinstance(attr_value, (float, int)):
+                # for numerical - find the start and end, and set the value
+                numbers_idx = _find_numbers_indices(tokens, attr_idx)
+                assert len(numbers_idx) == 1
+                num_start, num_end = numbers_idx[0]
+                cur_value = float("".join(tokens[num_start : num_end + 1]))
+                operation = _get_numerical_operation(
+                    cur_value, attr_value, VariationType.NUMERIC.name, numbers_mode=numbers_mode
+                )
+                # operatio name starts with numeric and not vector - this will help parse it later
+                idx_and_operations.append((num_start, operation))
+            elif isinstance(attr_value, tuple):
+                # for vectors - has to make a label for each idx
+                numbers_indices = _find_numbers_indices(tokens, attr_idx)
+                assert len(numbers_indices) == 3
+                vector_values = [
+                    float("".join(tokens[num_start : num_end + 1])) for num_start, num_end in numbers_indices
+                ]
+                for i, cur_value in enumerate(vector_values):
+                    new_value = attr_value[i]
+                    num_start, num_end = numbers_indices[i]
+                    operation = _get_numerical_operation(cur_value, new_value, VECTOR, numbers_mode=numbers_mode)
+                    # operation name starts with vector - so it is clear it is not numeric and this helps parsing
+                    idx_and_operations.append((num_start, operation))
+            else:
+                raise ValueError()
+    return idx_and_operations
+
+
+def _find_attr_name_by_value_idx(tokens, idx):
+    """finds the attribute name given the index of a value. goes back until it finds the : and the name is just before that"""
+    while idx >= 0:
+        idx -= 1
+        token = tokens[idx]
+        if token == NAME_VALUE_SEP_stripped:
+            break
+    assert idx != 0
+    return tokens[idx - 1]
+
+
+def _get_from_to_socket_names(tokens, from_to_idx):
+    assert tokens[from_to_idx] == FROM_TO_stripped
+    return tokens[from_to_idx - 1], tokens[from_to_idx + 1]
+
+
+def _find_node_name_by_idx(tokens, idx, next_node=False):
+    """
+    returns the name of the last or next node. if last - goes back idx by idx until we get to start of node (
+    then get the two ids before it - "TexGradient" "_1" - assuming the right tokenizer.
+    if next - adds to idx until end of node. if ; is reached - we are in the wrong place.
+    """
+    progression = 1 if next_node else -1
+    node_break = NODE_CLOSE_stripped if next_node else NODE_OPEN_stripped
+    while idx >= 0:
+        idx += progression
+        token = tokens[idx]
+        if token == NODES_EDGES_SEP_stripped:
+            raise ValueError("Arrived to next node! Maybe the idx is for the node area?")
+        if token == node_break:
+            break
+    assert idx != 0
+    node_tokens = tokens[idx + 1 : idx + 3] if next_node else tokens[idx - 2 : idx]
+    return "".join(node_tokens)
+
+
+def _group_operations(operations):
+    """
+    Takes a list of operations and groups the vector operations and add edge operations together so
+    [(29, 'VECTOR__9.4', 0.6),
+     (32, 'VECTOR__1.6', 0.5),
+     (35, 'VECTOR__8.0', 0.8),
+     (45, 'NUMERIC__2.2', 0),
+     (50, 'NUMERIC__0.3', 0.9)]
+     becomes
+     [(29, 'VECTOR__9.4__1.6__8.0', 0.7),
+     (45, 'NUMERIC__2.2', 0.6),
+     (50, 'NUMERIC__0.3', 0.3)]
+    for add edge, this:
+    [(1, 'ADD_EDGE__to__Color'), (13, 'ADD_EDGE__from__out')]
+    becomes
+    [(13, 'ADD_EDGE__to__Color__1__from__out')]
+    """
+    grouped_operations = []
+    add_edge_operations = []
+    i = 0
+    while i < len(operations):
+        operation_idx, operation_type, prob = operations[i]
+        if operation_type.startswith(VECTOR):
+            # remove the VECTOR prefix from the 2nd and 3rd operations and combine
+            ops = (
+                operation_type
+                + operations[i + 1][1].replace(f"{VECTOR}__", "@")
+                + operations[i + 2][1].replace(f"{VECTOR}__", "@")
+            )
+            prob_mean = np.mean([prob, operations[i + 1][2], operations[i + 2][2]])
+            # index of the first only
+            grouped_operations.append((operation_idx, ops, prob_mean))
+            i += 3
+        elif operation_type.startswith(VariationType.ADD_EDGE.name):
+            add_edge_operations.append((operation_idx, operation_type, prob))
+            i += 1
+        else:
+            grouped_operations.append((operation_idx, operation_type, prob))
+            i += 1
+    # handle the add edge, take the first add from and first add to. In theory there should only be one of each...
+    if len(add_edge_operations) > 0:
+        # sorting the operations by probability, taking the highest one
+        to_operations = sorted(
+            [operation for operation in add_edge_operations if "__to__" in operation[1]],
+            key=lambda x: x[2],
+            reverse=True,
+        )
+        from_operations = sorted(
+            [operation for operation in add_edge_operations if "__from__" in operation[1]],
+            key=lambda x: x[2],
+            reverse=True,
+        )
+        if len(to_operations) == 0 or len(from_operations) == 0:
+            return grouped_operations
+        add_to = to_operations[0]
+        add_from = from_operations[0]
+        prob = np.mean([add_to[2], add_from[2]])
+        new_operation = add_to[1] + f"__{add_to[0]}__{add_from[1]}"
+        grouped_operations.append((add_from[0], new_operation, prob))
+    return grouped_operations
+
+
+def _group_variations(variations) -> list[tuple]:
+    """
+    Since the operations are converted to variations one by one - the numeric and cat variations are separated.
+    Here we take all the numeric and cat variations and combine them to one.
+    so
+    [{'variation_type': 'CAT_AND_NUMERIC',
+      'step': {'TexVoronoiDistance_1': {'Scale': 2.2}}},
+     {'variation_type': 'CAT_AND_NUMERIC',
+      'step': {'TexVoronoiDistance_1': {'Randomness': 0.3}}}]
+    becomes
+    [{'variation_type': 'CAT_AND_NUMERIC',
+      'step': defaultdict(dict,
+                  {'TexVoronoiDistance_1': {'Scale': 2.2, 'Randomness': 0.3}})}]
+    other variations are not touched
+    """
+    cat_numeric_variation = {"variation_type": VariationType.CAT_AND_NUMERIC.name, "step": defaultdict(dict)}
+    variations_groups = []
+    numeric_cat_probs = []
+    for variation, prob in variations:
+        if variation["variation_type"] != VariationType.CAT_AND_NUMERIC.name:
+            variations_groups.append((variation, prob))
+        else:
+            step = variation["step"]
+            for node_name, attr_values in step.items():  # although it really will only be one
+                for attr_name, attr_value in attr_values.items():
+                    cat_numeric_variation["step"][node_name][attr_name] = attr_value
+            numeric_cat_probs.append(prob)
+    if len(cat_numeric_variation["step"]) > 0:
+        variations_groups.append((cat_numeric_variation, np.mean(numeric_cat_probs)))
+    return variations_groups
+
+
+def _node_idx_to_name(tokens, idx):
+    """Assuming the idx is on the first token of the node - returns the node name"""
+    return "".join(tokens[idx : idx + 2])
+
+
+def _edge_to_token_labels(tokens, edge, numbers_mode=True, ignore_error=False):
+    """
+    Converts an edge (a variation on a NetworkManager) to a list of labels for each token, for an encoder model to learn
+    to classify from.
+    If numbers_mode - creates labels with the actual values of the numbers, otherwise a simple increase and decrease
+    """
+    tokens = [token.strip() for token in tokens]
+    labels = [NO_ACTION_LABEL] * len(tokens)
+    step = edge["step"]
+    variation_type = edge["variation_type"]
+    operation_prefix = f"{variation_type}__"
+    if variation_type == VariationType.ADD_NODE.name:
+        if "edge" in step:
+            node_before, node_after, edge_in_out = step["edge"]
+            operation = f"{step['new_node_type']}__{step['new_node_in']}__{step['new_node_out']}"
+            # add node on edge - put in on the "->" token
+            edge_idx = _find_edge_index_in_tokens(tokens, node_before, node_after, edge_in_out["in"], edge_in_out["out"])
+            labels[edge_idx] = operation_prefix + operation
+        else:
+            # if not on edge - then on the EDGES: token (probably should be on NODES but that is already taken the cls for the whole code in the first implementation
+            operation = step["new_node_type"]
+            edges_idx = _find_edges_token(tokens)
+            labels[edges_idx] = operation_prefix + operation
+    elif variation_type == VariationType.REMOVE_NODE.name:
+        node_to_remove = step["remove_node_name"]
+        node_idx = _find_node_in_nodes_section_by_name(tokens, node_to_remove)
+        labels[node_idx] = operation_prefix
+    elif variation_type == VariationType.ADD_EDGE.name:
+        in_node_idx = _find_node_in_nodes_section_by_name(tokens, step["in_node"])
+        out_node_idx = _find_node_in_nodes_section_by_name(tokens, step["out_node"])
+        in_operation = step["in"]
+        out_operation = step["out"]
+        in_node_type = BlenderTreeManager.node_name_to_node_type_name(step["in_node"])
+        # nodes have different names for their inputs, like Vector, Fac etc. this mapping reduces to fewer names
+        # so there will be fewer labels for the model to learn.
+        in_operation_canonical = INPUT_NAME_MAPPING_TO_CANONICAL[in_node_type][in_operation]
+        # sadly, add edge needs two labels - for the socket in and out
+        labels[in_node_idx] = f"{operation_prefix}to__{in_operation_canonical}"
+        # mapping the names of the outputs all to "out", so we'd have fewer labels, less confusing for the model
+        # ideally - this should be handeled elsewhere, and all outputs will be called out anyway (except when there's more than one output)
+        labels[out_node_idx] = f"{operation_prefix}from__{OUT_NAME_MAPPING[out_operation]}"
+    elif variation_type == VariationType.REMOVE_EDGE.name:
+        edge_idx = _find_edge_index_in_tokens(tokens, step["out_node"], step["in_node"], step["in"], step["out"])
+        labels[edge_idx] = operation_prefix
+    elif variation_type in [VariationType.CAT_AND_NUMERIC.name, VariationType.NUMERIC.name]:
+        idx_operations = _get_labels_for_cat_numeric(tokens, step, numbers_mode=numbers_mode, ignore_error=ignore_error)
+        for idx, operation in idx_operations:
+            # for numeric and cat and numeric - call them all cat and numeric so it's one label for the model
+            labels[idx] = operation
+    else:
+        raise ValueError()
+    return labels
+
+def _operation_to_variation(idx, operation, probability, nm, tokens, numeric_params=True):
+    operation_type, operation_params = operation.split("__", 1)
+    if operation_type == VariationType.ADD_NODE.name:
+        node_on = tokens[idx]
+        if node_on == FROM_TO_stripped:
+            # from the "->" idx - finds the nodes it is connecting
+            node_from = _find_node_name_by_idx(tokens, idx, next_node=False)
+            node_to = _find_node_name_by_idx(tokens, idx, next_node=True)
+            node_type, socket_in, socket_out = operation_params.split("__")
+            previous_out, previous_in = _get_from_to_socket_names(tokens, idx)
+            variation = {
+                "variation_type": VariationType.ADD_NODE.name,
+                "step": {
+                    "new_node_type": node_type,
+                    "new_node_name": nm.get_new_node_name(node_type),
+                    "new_node_in": socket_in,
+                    "new_node_out": socket_out,
+                    "edge": (node_from, node_to, {"in": previous_in, "out": previous_out}),
+                },
+            }
+            return variation, probability
+        if node_on == EDGES_START_stripped:
+            # if the add node is on "EDGES:" - then just add a node anywhere
+            variation = {
+                "variation_type": VariationType.ADD_NODE.name,
+                "step": {
+                    "new_node_type": operation_params,
+                    "new_node_name": nm.get_new_node_name(operation_params),
+                },
+            }
+            return variation, probability
+        else:
+            raise ValueError()
+    if operation_type == VariationType.REMOVE_NODE.name:
+        # if remove node - find the node name and us the nm to create the variation
+        node_to_remove = _node_idx_to_name(tokens, idx)
+        variation_step = create_remove_node_variation(nm, node_to_remove).steps_forward[0].step
+        variation = {"variation_type": VariationType.REMOVE_NODE.name, "step": variation_step}
+        return variation, probability
+    if operation_type == VariationType.ADD_EDGE.name:
+        # the two operations for the edge were merged in group_operations, now get the params
+        _, to_socket_canonical, to_node_idx, _, _, from_socket = operation_params.split("__")
+        to_node_idx = int(to_node_idx)
+        from_node = _node_idx_to_name(tokens, idx)
+        to_node = _node_idx_to_name(tokens, to_node_idx)
+
+        # we mapped from the many input and output names to only fewer so we'd have fewer labels
+        # here we map them back to their real input names
+        to_node_type = BlenderTreeManager.node_name_to_node_type_name(to_node)
+        to_socket = CANONICAL_MAPPING_TO_INPUT_NAME_MAPPING[to_node_type][to_socket_canonical]
+        if from_socket not in ["X", "Y"]:  # there is only one output
+            node_type = BlenderTreeManager.node_name_to_node_type(from_node)
+            from_socket = list(node_type.OUTPUTS)[0]  # take the name of the one output
+
+        variation = {
+            "variation_type": VariationType.ADD_EDGE.name,
+            "step": {"out_node": from_node, "in_node": to_node, "in": to_socket, "out": from_socket},
+        }
+        return variation, probability
+    if operation_type == VariationType.REMOVE_EDGE.name:
+        node_from = _find_node_name_by_idx(tokens, idx, next_node=False)
+        node_to = _find_node_name_by_idx(tokens, idx, next_node=True)
+        socket_out, socket_in = _get_from_to_socket_names(tokens, idx)
+        variation = {
+            "variation_type": VariationType.REMOVE_EDGE.name,
+            "step": {"out_node": node_from, "in_node": node_to, "in": socket_in, "out": socket_out},
+        }
+        return variation, probability
+    if operation_type in [VariationType.NUMERIC.name, VariationType.CAT_AND_NUMERIC.name, VECTOR]:
+        node_name = _find_node_name_by_idx(tokens, idx, next_node=False)
+        attr_name = _find_attr_name_by_value_idx(tokens, idx)
+        # The names of the labels are "NUMERIC", "VECTOR" and "CAT_AND_NUMERIC", and then the value
+        if operation_type == VariationType.NUMERIC.name:
+            param = float(operation_params) if numeric_params else operation_params
+        elif operation_type == VECTOR:
+            param = tuple([float(x) if numeric_params else x for x in operation_params.split("@")])
+        elif operation_type == VariationType.CAT_AND_NUMERIC.name:
+            param = operation_params
+        else:
+            raise ValueError()
+        variation = {
+            "variation_type": VariationType.CAT_AND_NUMERIC.name,
+            "step": {
+                node_name: {attr_name: param},
+            },
+        }
+        return variation, probability
+    else:
+        raise ValueError()
+
+
+def _find_idx_of_next_character(tokens, idx, token_to_find, next_token=True):
+    """
+    returns the idx of the next time we encounter a given character.
+    if next_token is False - goes backwards instead of forward when looking for the character
+    """
+    progression = 1 if next_token else -1
+    while 0 <= idx <= len(tokens):
+        idx += progression
+        token = tokens[idx]
+        if token == token_to_find:
+            break
+    return idx
+
+
+def _fix_labels_vectors(tokens, labels, confidence_values):
+    """
+    Since the model can automatically generate changes on part of a vector and not the entire vector:
+    e.g.
+    '0__',
+     '0__',
+     'VECTOR__INCREASE',
+     '0__',
+     '0__',
+     '0__',
+     'VECTOR__INCREASE',
+     '0__',
+     '0__',
+     '0__',
+     this can cause a problem because we assume that changes in vectors always come in triplets
+     'VECTOR__INCREASE',
+     '0__',
+     'VECTOR__INCREASE',
+     '0__',
+     'VECTOR__INCREASE',
+     on the correct vector values.
+     This function looks for VECTOR labels, and then makes sure the entire triplet has a VECTOR value. if not - it adds
+     one with no operation.
+    """
+    i = 0
+    while i < len(labels):
+        label = labels[i]
+        if label.startswith(VECTOR):
+            start_idx = _find_idx_of_next_character(tokens, i, VECTOR_VALUES_OPEN_stripped, next_token=False)
+            first_sep = _find_idx_of_next_character(tokens, start_idx, VECTOR_VALUES_SEP_stripped, next_token=True)
+            second_sep = _find_idx_of_next_character(tokens, first_sep, VECTOR_VALUES_SEP_stripped, next_token=True)
+            for idx in [start_idx + 1, first_sep + 1, second_sep + 1]:
+                if not labels[idx].startswith(VECTOR):
+                    labels[idx] = f"{VECTOR}__{NO_ACTION_LABEL}"
+                    # if there was nothing there, decrease probability (better: take the prob of the action, but we don't have it here
+                    confidence_values[idx] = confidence_values[idx] / 2
+            i = max(second_sep + 1, i)
+        i += 1
