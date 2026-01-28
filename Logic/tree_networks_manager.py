@@ -512,6 +512,49 @@ class TreesNetworkManager:
                     remained_uuids.add(node)
         assert len(remained_uuids) == 0
 
+    def create_partial_str_representation(self, starting_node: str, k_steps: int) -> tuple[str, list[str]]:
+        """
+        Create a string representation of a subgraph around a starting node within k steps.
+        The representation does not include the full details of each node, just their IDs and the types of variations on the edges,
+        Mostly useful for presentation purposes.
+        """
+        network = k_hop_subgraph_both_directions(self.network, starting_node, k_steps)
+
+        nodes_text = '\n'.join([f'node_{x}' for x in network.nodes])
+        edges_text = ''
+        for edge in nx.node_link_data(network, edges="edges")['edges']:
+            if edge['variation_type'] == 'ADD_NODE':
+                change_name = f"Add {edge['step']['new_node_type']}"
+            elif edge['variation_type'] == 'ADD_EDGE':
+                change_name = f"Connect {edge['step']['out_node']} to {edge['step']['in_node']}"
+            elif edge['variation_type'] == 'CAT_AND_NUMERIC':
+                inner_node_name, changes = list(edge['step'].items())[0]
+                attr, change_type = list(changes.items())[0]
+                if type(change_type) == float:
+                    change_type = "INCREASE"  # due to a bug
+                change_name = f"{change_type} {inner_node_name} {attr}"
+            elif edge['variation_type'] == 'REMOVE_EDGE':
+                change_name = f"Disconnect {edge['step']['out_node']} from {edge['step']['in_node']}"
+            elif edge['variation_type'] == 'REMOVE_NODE':
+                change_name = f"Remove {edge['step']['remove_node_name']}"
+            else:
+                raise ValueError()
+            edges_text += f'node_{edge["source"]} -- {change_name} --> node_{edge["target"]}\n'
+
+        all_text = f'NODES:\n{nodes_text} \n\n EDGES:\n{edges_text}'
+        return all_text, list(network.nodes)
+
+def k_hop_subgraph_both_directions(G, source, k):
+    out_nodes = nx.single_source_shortest_path_length(
+        G, source, cutoff=k
+    ).keys()
+
+    in_nodes = nx.single_source_shortest_path_length(
+        G.reverse(copy=False), source, cutoff=k
+    ).keys()
+
+    nodes = set(out_nodes) | set(in_nodes)
+    return G.subgraph(nodes).copy()
 
 def change_seed(nm, n_changes=5, **kwargs):
     return non_structural_changes(nm, n_changes, ParamRequestType.SEED, **kwargs)

@@ -50,8 +50,8 @@ This project is an exercise in program synthesis focused on generating procedura
 - `training_tokenizer.ipynb`
   - Train a tokenizer used by the code-corrector model.
 
-- `applying_search.ipynb`
-  - Example workflow demonstrating the MCTSOperator searching for a shader that matches a target texture.
+- `generating_comparison_results.ipynb`
+  - A messy notebook that runs multiple methods (MCTS, sampling, direct image→code) and collects results for comparison.
 
 ## Training scripts (Logic/training_scripts)
 Brief descriptions of the main training entry-points and the models they train:

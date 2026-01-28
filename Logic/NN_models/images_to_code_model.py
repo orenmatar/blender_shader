@@ -186,9 +186,8 @@ class ImageToCodeDecoder(nn.Module):
         logits = self.output_proj(output)  # (B, T, vocab_size)
         return logits
 
-
     @torch.no_grad()
-    def generate(self, images, max_new_tokens=256, temperature=1.0, top_k=None, top_p=None, greedy=False): # ADD 'greedy=False'
+    def generate(self, images, max_new_tokens=256, temperature=1.0, top_k=None, top_p=None, greedy=False):
         """
         Generates code tokens autoregressively from input images.
         images: (B, C, H, W) - Input images
@@ -251,10 +250,10 @@ class ImageToCodeDecoder(nn.Module):
                     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
                     cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
                     sorted_indices_to_remove = cumulative_probs > top_p
-                    if sorted_indices_to_remove.shape[-1] > 1:
-                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                     sorted_indices_to_remove[..., 0] = False
-                    logits.scatter_(-1, sorted_indices[sorted_indices_to_remove], float('-inf'))
+                    sorted_logits[sorted_indices_to_remove] = float('-inf')
+                    logits = sorted_logits.gather(-1, sorted_indices.argsort(-1))
 
                 # Sample the next token
                 probs = torch.softmax(logits, dim=-1)

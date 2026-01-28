@@ -1,4 +1,5 @@
 import os
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -122,7 +123,8 @@ class MCTSOperator:
         max_expansions=20,
         max_nodes_to_expand_per_iter=30,
         n_nodes_to_optimize_at_end=3,
-    ) -> tuple[TreesNetworkManager, list]:
+        return_time_stats=False,
+    ) -> tuple[TreesNetworkManager, list] | tuple[TreesNetworkManager, list, list]:
         """
         The main search function - performs the search towards the target image, starting from the given starting point
         :param target_img_path: path to the target image
@@ -135,9 +137,11 @@ class MCTSOperator:
         :param max_expansions: maximum number of expansion iterations to perform
         :param max_nodes_to_expand_per_iter: maximum number of nodes to add to the network at every iteration
         :param n_nodes_to_optimize_at_end: number of best nodes to optimize at the end of the search, if optimize is True
+        :param return_time_stats: whether to return time statistics of the forward passes
         """
         self.set_new_target(target_img_path, workdir, starting_point_btm=None)
         all_node_expansions = []
+        forward_passes_times = []
         nodes_to_expand = [self.start_node_id]
         for i in range(max_expansions):
             # STEP 0: generate an image for all the nodes to expand (if they don't already have an image)
@@ -161,7 +165,9 @@ class MCTSOperator:
                 codes.append(code)
 
             # STEP 2: apply the code-corrector NN to generate possible edits/actions/corrections, and their probabilities
+            t = time.time()
             nodes_results = self._codes_to_variations_and_scores(codes, images_names, sample_labels=sample_labels)
+            forward_passes_times.append(time.time() - t)
 
             # STEP 3: add all variations to the network and the new values
             for node_id, node_result in zip(nodes_to_expand, nodes_results):
@@ -223,6 +229,8 @@ class MCTSOperator:
             node_id for node_id in best_nodes_at_end if not self.network_manager.node_has_label(node_id, HAS_IMAGE)
         ]
         self.generate_images_for_nodes(best_nodes_with_no_image)
+        if return_time_stats:
+            return self.network_manager, all_node_expansions, forward_passes_times
         return self.network_manager, all_node_expansions
 
     def generate_images_for_nodes(self, nodes_to_generate_images: list[str]):
@@ -460,7 +468,7 @@ class MCTSOperator:
                         child_prior = self.network_manager.get_node_value(child, ACTION_PREDICTED_VALUE)
                         child_puct = self.get_puct(child_value, child_count, parent_count, child_prior, c_puct=c_puct)
                         # the puct tuple keeps track of the puct of all ancestors - so when we sort by it, good puct for ancestors gets priority
-                        # this is to mimic the behaviour of a non parallelize puct - which only explores one node at at time
+                        # this is to mimic the behaviour of a non parallelize puct - which only explores one node at a time
                         nodes_to_calc_puct.append((parent_puct + (child_puct,), child))
             current_nodes_to_examine = sorted(nodes_to_calc_puct, reverse=True)[:top_k]
         return [node_id for _, node_id in sorted(leafs, reverse=True)[:top_k]]
@@ -468,7 +476,7 @@ class MCTSOperator:
     def get_nodes_expected_value(self, nodes_to_consider):
         node_expected_values = []
         for node_id in nodes_to_consider:
-            # every node should have excatly one predecessor, except from the cluster start
+            # every node should have exactly one predecessor, except from the cluster start
             predecessors = list(self.network_manager.network.predecessors(node_id))
             if len(predecessors) == 0:
                 continue

@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Learning to Search: Neural-Guided Program Synthesis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Serif:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+    <style>
+        :root {
+            --color-bg: #ffffff;
+            --color-bg-alt: #f5f5f5;
+            --color-text: #1a1a1a;
+            --color-text-secondary: #555;
+            --color-accent: #4a6fa5;
+            --color-accent-hover: #3a5a8a;
+            --color-border: #e0e0e0;
+            --color-table-header: #f0f0f0;
+            --max-width: 850px;
+            --font-serif: 'Noto Serif', Georgia, serif;
+            --font-sans: 'Noto Sans', -apple-system, sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            font-size: 17px;
+            line-height: 1.7;
+            color: var(--color-text);
+            background: var(--color-bg);
+        }
+
+        .container {
+            max-width: var(--max-width);
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Section wrappers for alternating backgrounds */
+        .section-wrapper {
+            padding: 50px 0;
+        }
+
+        .section-wrapper.alt {
+            background: var(--color-bg-alt);
+        }
+
+        /* Header */
+        .header-wrapper {
+            padding: 60px 0 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: var(--font-serif);
+            font-size: 2.5em;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 20px;
+            letter-spacing: -0.01em;
+        }
+
+        .author {
+            font-size: 1.1em;
+            color: var(--color-text-secondary);
+            margin-bottom: 25px;
+        }
+
+        .author a {
+            color: var(--color-accent);
+            text-decoration: none;
+        }
+
+        .author a:hover {
+            text-decoration: underline;
+        }
+
+        .links {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .links a {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: var(--color-text);
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 500;
+            font-size: 0.95em;
+            transition: background 0.2s;
+        }
+
+        .links a:hover {
+            background: var(--color-accent);
+        }
+
+        .links svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        /* Hero image */
+        .hero-wrapper {
+            padding: 0 0 30px;
+        }
+
+        .hero-image img {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+        }
+
+        /* Section headings */
+        h2 {
+            font-family: var(--font-serif);
+            font-size: 1.6em;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        h3 {
+            font-family: var(--font-sans);
+            font-size: 1.1em;
+            font-weight: 600;
+            margin: 25px 0 12px;
+        }
+
+        p {
+            margin-bottom: 16px;
+        }
+
+        /* Abstract */
+        .abstract-wrapper {
+            padding: 40px 0;
+            background: var(--color-bg-alt);
+        }
+
+        .abstract-box {
+            background: white;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 30px;
+        }
+
+        .abstract-box h2 {
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .abstract-box p {
+            margin-bottom: 0;
+            color: var(--color-text-secondary);
+        }
+
+        /* Images */
+        figure {
+            margin: 25px 0;
+        }
+
+        figure img {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+            border: 1px solid var(--color-border);
+        }
+
+        figcaption {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: var(--color-text-secondary);
+            line-height: 1.5;
+        }
+
+        /* Tables */
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 25px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+            background: white;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        th {
+            background: var(--color-table-header);
+            font-weight: 600;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        tbody tr:hover {
+            background: rgba(0,0,0,0.02);
+        }
+
+        .table-note {
+            font-size: 0.88em;
+            color: var(--color-text-secondary);
+            margin-top: 10px;
+        }
+
+        /* Collapsible sections */
+        details {
+            margin: 20px 0;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            background: white;
+        }
+
+        summary {
+            padding: 15px 20px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1em;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::before {
+            content: '▶';
+            font-size: 0.7em;
+            transition: transform 0.2s;
+        }
+
+        details[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .details-content {
+            padding: 20px;
+        }
+
+        /* Math formulas */
+        .formula {
+            background: var(--color-bg-alt);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+            overflow-x: auto;
+            text-align: center;
+        }
+
+        .formula-label {
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-align: left;
+        }
+
+        .formula-vars {
+            margin-top: 15px;
+            text-align: left;
+            font-size: 0.92em;
+            color: var(--color-text-secondary);
+        }
+
+        .formula-vars ul {
+            list-style: none;
+            margin-top: 8px;
+        }
+
+        .formula-vars li {
+            margin-bottom: 4px;
+        }
+
+        /* Example results grid */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 25px 0;
+        }
+
+        .result-pair {
+            background: white;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .result-pair .images {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .result-pair img {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+        }
+
+        .result-pair .label {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            text-align: center;
+            font-size: 0.82em;
+            color: var(--color-text-secondary);
+            border-top: 1px solid var(--color-border);
+        }
+
+        .result-pair .label span {
+            padding: 6px;
+        }
+
+        .result-pair .label span:first-child {
+            border-right: 1px solid var(--color-border);
+        }
+
+        /* Related work */
+        .related-work p {
+            margin-bottom: 12px;
+        }
+
+        .related-work a {
+            color: var(--color-accent);
+            text-decoration: none;
+        }
+
+        .related-work a:hover {
+            text-decoration: underline;
+        }
+
+        /* Footer */
+        .footer-wrapper {
+            padding: 30px 0 50px;
+            text-align: center;
+        }
+
+        .footer-wrapper a {
+            color: var(--color-accent);
+            text-decoration: none;
+        }
+
+        .footer-wrapper a:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.9em;
+            }
+
+            .section-wrapper {
+                padding: 35px 0;
+            }
+
+            .links {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .links a {
+                width: 100%;
+                max-width: 180px;
+                justify-content: center;
+            }
+
+            table {
+                font-size: 0.85em;
+            }
+
+            th, td {
+                padding: 8px 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header-wrapper">
+        <div class="container">
+            <h1>Learning to Search:<br>Neural-Guided Program Synthesis</h1>
+            <p class="author">
+                <a href="https://github.com/orenmatar" target="_blank">Oren Matar</a>
+            </p>
+            <div class="links">
+                <a href="https://github.com/orenmatar/blender_shader" target="_blank">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    Code
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hero Image -->
+    <div class="hero-wrapper">
+        <div class="container">
+            <figure class="hero-image">
+                <img src="images/header.png" alt="Program evolution over iterations">
+            </figure>
+        </div>
+    </div>
+
+    <!-- Abstract -->
+    <div class="abstract-wrapper">
+        <div class="container">
+            <div class="abstract-box">
+                <h2>Abstract</h2>
+                <p>
+                    Program synthesis is the reconstruction of a program from a sample output, and is considered a fundamental and unsolved problem in AI research. In this work, we present a neural-guided search method for program synthesis. We train a transformer encoder that, given a current program state and a target specification, outputs a probability distribution over all candidate edits to that program in a single forward pass. These edit probabilities guide tree search algorithms to iteratively refine the program toward the target. We demonstrate our approach on procedural texture synthesis in Blender: given a target texture image, the system searches for the node tree that produces it. While we focus on this domain, the method is applicable to program synthesis more broadly.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- The Problem -->
+    <div class="section-wrapper">
+        <div class="container">
+            <h2>The Problem</h2>
+            <p>
+                Blender is an open-source 3D graphics application that supports procedural modeling and texturing workflows. Procedural textures are generated by shader node trees—directed graphs where each node applies a mathematical function (noise, Voronoi, gradients, color mixing) and passes its output to the next. The entire tree takes coordinates as input and produces a texture as output. For our purposes, this node tree can be represented as textual code: a list of nodes with their parameters, plus edges connecting them.
+            </p>
+            <p>
+                Our goal is the inverse problem: given a target texture, recover the node tree (or equivalently, the code) that produces it. This is an instance of program synthesis, where the goal is to find a program that matches a given specification. The program search space is enormous: with dozens of node types, continuous parameters, and arbitrary graph structures, the number of possible programs grows combinatorially.
+            </p>
+            <figure>
+                <img src="images/problem_explained.png" alt="Problem visualization">
+                <figcaption>Given a target texture (left), we aim to synthesize the shader node tree (center) that produces a matching procedural texture (right).</figcaption>
+            </figure>
+        </div>
+    </div>
+
+    <!-- The Model -->
+    <div class="section-wrapper alt">
+        <div class="container">
+            <h2>The Model</h2>
+            <p>
+                Our approach uses a transformer encoder to guide the search. The model takes as input: a tokenized code of a current program, a target image, and the current image (rendered from the current program). Image embeddings are produced by a CNN.
+            </p>
+            <p>
+                The model produces two outputs. From the CLS token, it outputs V(s)—an estimate of how close the current program is to the target. From each program token, it outputs P(a|s)—a probability distribution over all actions. This means a single forward pass proposes edits across the entire program simultaneously.
+            </p>
+            <p>
+                The action labels are general (e.g., "remove node," "increase parameter," "add Voronoi node"), but their meaning is determined by the token to which they are applied. For instance, "remove node" applied to a Noise node token means removing that specific node from the program; "add Voronoi node" applied to an edge token inserts a Voronoi node at that connection. In this way, a fixed set of action labels represents all possible edits to the program.
+            </p>
+            <figure>
+                <img src="images/nn.png" alt="Model architecture">
+                <figcaption>The encoder takes the target image, current image, and tokenized program as input. It outputs a value estimate V(s) from the CLS token, and action probabilities P(a|s) for each program token.</figcaption>
+            </figure>
+            <figure>
+                <img src="images/edits.png" alt="Edit operations">
+                <figcaption>The encoder outputs action labels for all program tokens. Actions applied to different tokens yield different edits: "remove node" on a node token deletes it; "add Voronoi-node" on an edge token inserts a new node at that connection. In this example, the "Add Voronoi-node" action was selected and the program is updated by that change.</figcaption>
+            </figure>
+        </div>
+    </div>
+
+    <!-- Training Data -->
+    <div class="section-wrapper">
+        <div class="container">
+            <h2>Training Data</h2>
+            <p>
+                To train the model, we automatically generate a synthetic dataset of programs and the transitions between them. Starting from empty programs, we apply random edits (adding nodes, removing nodes, changing parameters) and record each resulting program state along with its rendered texture. This produces a network-dataset where each node represents both a program and its associated texture, and edges are the actions that transform one program into another.
+            </p>
+            <p>
+                For training, we sample pairs of states from this network: one serves as the current state, the other as the target. The model is trained to predict the single edit that moves closest to the target. In this way it learns to traverse the network of program states.
+            </p>
+            <p>
+                The V(s) output is trained to estimate the distance between the current state and the target, based on their distance in the network-dataset, normalized to a value between 0 and 1.
+            </p>
+            <figure>
+                <img src="images/dataset_structure.png" alt="Dataset structure">
+                <figcaption>The training dataset forms a network of program states connected by edit operations. Given a current state and a target state, the model is trained to predict the action (blue arrow) that moves toward the target, with a distance estimate of 3 for this example.</figcaption>
+            </figure>
+        </div>
+    </div>
+
+    <!-- Search Process -->
+    <div class="section-wrapper alt">
+        <div class="container">
+            <h2>Search Process</h2>
+            <p>
+                At inference time, we use the trained model to guide a search through the space of programs. We begin with an empty program (where the input is directly connected to the output). The encoder processes this state along with the target image, producing action probabilities for each token and a value estimate V(s). Based on these probabilities, we select a subset of actions and generate the resulting new program states. This expansion continues iteratively.
+            </p>
+            <p>
+                After a fixed number of expansions, we select the best program found. To evaluate candidates, we use a separately trained Siamese network that scores the similarity between two textures.
+            </p>
+
+            <details>
+                <summary>Search Strategies</summary>
+                <div class="details-content">
+                    <p>We explored two strategies for selecting which actions to expand:</p>
+                    
+                    <div class="formula">
+                        <div class="formula-label">Sampling</div>
+                        <p>We compute an expected value for each candidate action, then sample actions with probability proportional to these values:</p>
+                        <p>\[\text{expected\_value} = V(s_{\text{parent}})^2 \cdot P(a)\]</p>
+                        <div class="formula-vars">
+                            where \(V(s_{\text{parent}})\) is the value estimate of the parent state and \(P(a)\) is the model's predicted probability for the action.
+                        </div>
+                    </div>
+
+                    <div class="formula">
+                        <div class="formula-label">MCTS</div>
+                        <p>We use a variant of <a href="https://en.wikipedia.org/wiki/Monte_Carlo_tree_search" target="_blank">Monte Carlo Tree Search</a>. Our formulation balances exploitation of high-value paths with exploration of less-visited ones:</p>
+                        <p>\[\text{score} = \underbrace{\frac{V_{\text{total}}}{N}}_{\text{exploitation}} + c_{\text{puct}} \cdot \underbrace{P(a) \cdot \frac{\sqrt{N_{\text{parent}}}}{1 + N_{\text{child}}}}_{\text{exploration}}\]</p>
+                        <div class="formula-vars">
+                            <ul>
+                                <li>\(P(a)\) = model's predicted probability for the action</li>
+                                <li>\(V_{\text{total}}\) = sum of value estimates backpropagated from descendant nodes</li>
+                                <li>\(N\) = number of times this node has been visited</li>
+                                <li>\(N_{\text{parent}}\) = visit count of the parent node</li>
+                                <li>\(N_{\text{child}}\) = visit count of the child node</li>
+                                <li>\(c_{\text{puct}}\) = constant controlling exploration vs. exploitation trade-off</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <p>At each iteration, we select the highest-scoring actions until reaching \(k\) nodes for expansion.</p>
+                </div>
+            </details>
+
+            <figure>
+                <img src="images/expansion.png" alt="Search process">
+                <figcaption>The search process, from left to right: (1) Initialize with an empty program state. (2) Apply the encoder to get action probabilities and V(s). (3) Select actions to expand, either by sampling or MCTS. (4) Apply the encoder to the new states. (5) Select again; the search may revisit earlier states rather than always expanding the most recent ones. Circle shading indicates V(s) estimate; arrow thickness indicates action probability.</figcaption>
+            </figure>
+        </div>
+    </div>
+
+    <!-- Results -->
+    <div class="section-wrapper">
+        <div class="container">
+            <h2>Results</h2>
+            <p>
+                We trained our encoder (~109M parameters) on 1 million examples sampled from a network of 100,000 synthetically generated textures. For comparison, we also trained a decoder model (~112M parameters) to directly generate programs from images, representing a standard program synthesis approach without search.
+            </p>
+            <p>
+                We evaluated on two test sets: 184 held-out textures (generated similarly to training data) and 48 new textures (sourced externally, not generated in Blender).
+            </p>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Test Set</th>
+                            <th>Similarity</th>
+                            <th>Time (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Decoder (2 samples)</td>
+                            <td>Held-out</td>
+                            <td>0.49</td>
+                            <td>3.6</td>
+                        </tr>
+                        <tr>
+                            <td>Decoder (20 samples)</td>
+                            <td>Held-out</td>
+                            <td>0.81</td>
+                            <td>24.3</td>
+                        </tr>
+                        <tr>
+                            <td>Sample (30 expansions)</td>
+                            <td>Held-out</td>
+                            <td>0.84</td>
+                            <td>3.3</td>
+                        </tr>
+                        <tr>
+                            <td>MCTS (30 expansions)</td>
+                            <td>Held-out</td>
+                            <td>0.85</td>
+                            <td>2.7</td>
+                        </tr>
+                        <tr>
+                            <td>Decoder (2 samples)</td>
+                            <td>New</td>
+                            <td>0.38</td>
+                            <td>3.6</td>
+                        </tr>
+                        <tr>
+                            <td>Decoder (20 samples)</td>
+                            <td>New</td>
+                            <td>0.73</td>
+                            <td>24.3</td>
+                        </tr>
+                        <tr>
+                            <td>Sample (30 expansions)</td>
+                            <td>New</td>
+                            <td>0.76</td>
+                            <td>3.4</td>
+                        </tr>
+                        <tr>
+                            <td>MCTS (30 expansions)</td>
+                            <td>New</td>
+                            <td>0.78</td>
+                            <td>2.9</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="table-note">Benchmarked on an RTX 5070.</p>
+
+            <p>
+                For comparable compute time, the encoder-search methods achieve superior results. Given enough samples, the decoder can approach our method's similarity scores, but requires an order of magnitude more compute. Our encoder evaluates P(a) for all possible actions for up to 12 candidate states in parallel per forward pass (~0.1s).
+            </p>
+            <p>
+                A caveat: our method requires rendering the texture at each expansion step, which adds overhead not reflected in these timings.
+            </p>
+
+            <h3>Example Results</h3>
+            <div class="results-grid">
+                <div class="result-pair">
+                    <div class="images">
+                        <img src="images/example_results/input_1.png" alt="Target 1">
+                        <img src="images/example_results/result_1.png" alt="Result 1">
+                    </div>
+                    <div class="label"><span>Target</span><span>Result</span></div>
+                </div>
+                <div class="result-pair">
+                    <div class="images">
+                        <img src="images/example_results/input_2.png" alt="Target 2">
+                        <img src="images/example_results/result_2.png" alt="Result 2">
+                    </div>
+                    <div class="label"><span>Target</span><span>Result</span></div>
+                </div>
+                <div class="result-pair">
+                    <div class="images">
+                        <img src="images/example_results/input_3.png" alt="Target 3">
+                        <img src="images/example_results/result_3.png" alt="Result 3">
+                    </div>
+                    <div class="label"><span>Target</span><span>Result</span></div>
+                </div>
+                <div class="result-pair">
+                    <div class="images">
+                        <img src="images/example_results/input_4.png" alt="Target 4">
+                        <img src="images/example_results/result_4.png" alt="Result 4">
+                    </div>
+                    <div class="label"><span>Target</span><span>Result</span></div>
+                </div>
+                <div class="result-pair">
+                    <div class="images">
+                        <img src="images/example_results/input_5.png" alt="Target 5">
+                        <img src="images/example_results/result_5.png" alt="Result 5">
+                    </div>
+                    <div class="label"><span>Target</span><span>Result</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RL Attempt (collapsible) -->
+    <div class="section-wrapper alt">
+        <div class="container">
+            <details>
+                <summary>RL Attempt</summary>
+                <div class="details-content">
+                    <p>
+                        A natural extension of this approach is to use MCTS-generated data to further train the model, similar to AlphaGo's self-play training loop. The MCTS search can be applied to completely new textures, generate trajectories, and use successful trajectories to train the model.
+                    </p>
+                    <p>
+                        We attempted this, but it did not improve performance. The training was unstable, with the model's performance fluctuating and slightly declining over time.
+                    </p>
+                    <p>
+                        The core difficulty is that unlike board games, there is no clear winner or loser. In AlphaGo, the outcome of a game provides an unambiguous training signal. In our setting, we only have continuous similarity scores, and we cannot know whether an unexplored branch might have led to a better solution. Our attempts to adapt the RL to this setting were not effective, and this remains an open problem for future work.
+                    </p>
+                    <figure>
+                        <img src="images/RL_training.png" alt="RL training results">
+                        <figcaption>Training with MCTS-generated data proved unstable. The plot shows similarity scores over training iterations, with high variance and no clear improvement.</figcaption>
+                    </figure>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <!-- Limitations & Future Work -->
+    <div class="section-wrapper">
+        <div class="container">
+            <h2>Limitations & Future Work</h2>
+            <p>
+                This work is a proof of concept, not a complete solution to procedural texture synthesis. The textures our method can generate remain relatively simple, though even in this constrained setting the search space is vast.
+            </p>
+            <p>
+                A core limitation lies in dataset generation. Randomly sampling edits produces mostly nonsensical programs: approximately 20% of generated textures were nearly empty images. While this does not prevent training (the model learns to produce these textures alongside meaningful ones), it means much of the data is wasted. Future work could explore smarter program generation strategies that better cover the space of useful, realistic textures.
+            </p>
+            <p>
+                Other directions for future research include scaling to more complex programs, improving the RL training loop, and applying this approach to other program synthesis domains beyond procedural textures.
+            </p>
+        </div>
+    </div>
+
+    <!-- Related Work (collapsible) -->
+    <div class="section-wrapper alt">
+        <div class="container">
+            <details>
+                <summary>Related Work</summary>
+                <div class="details-content related-work">
+                    <p>
+                        <a href="https://arxiv.org/abs/2501.18623" target="_blank">VLMaterial (Li et al., 2025)</a> tackles the same problem—synthesizing Blender shader node trees from images—using a fine-tuned vision-language model. They achieve better results, but rely on a high-quality curated dataset; our method works with purely synthetic data.
+                    </p>
+                    <p>
+                        Our approach builds on neural-guided program synthesis, where neural networks guide symbolic search. <a href="https://arxiv.org/abs/1611.01989" target="_blank">DeepCoder (Balog et al., 2017)</a> predicts which functions a program likely contains; we instead predict edits to a current program, enabling iterative refinement.
+                    </p>
+                    <p>
+                        The <a href="https://arxiv.org/abs/2510.04871" target="_blank">Tiny Recursive Model (Jolicoeur-Martineau, 2025)</a> also iteratively refines solutions, but operates in latent space rather than on discrete symbolic programs. <a href="https://dl.acm.org/doi/10.1145/3453483.3454080" target="_blank">DreamCoder (Ellis et al., 2021)</a> generates synthetic programs to train a neural policy, but focuses on learning reusable abstractions rather than guiding search toward a target.
+                    </p>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer-wrapper">
+        <div class="container">
+            <a href="https://github.com/orenmatar/blender_shader" target="_blank">GitHub Repository</a>
+        </div>
+    </div>
+</body>
+</html>
