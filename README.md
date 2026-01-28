@@ -1,4 +1,6 @@
-# blender_shader
+# Learning to Search: Neural-Guided Program Synthesis
+
+**📚 [Read more about the algorithm →](https://orenmatar.github.io/neuro_search_program_synthesis/)**
 
 This project is an exercise in program synthesis focused on generating procedural Blender shader node trees that reproduce a target texture image.
 
